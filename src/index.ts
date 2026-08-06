@@ -1,103 +1,131 @@
 import express from "express";
-import path from "path";
-import { config, validateConfig } from "./config";
+import { loadConfig } from "./config";
+import { createStateStore } from "./services/db";
+import { createQueues } from "./services/queue";
 import { startAutoPing } from "./services/ping";
-import { initTwitchBot } from "./services/twitch";
-import { initYoutubeBot } from "./services/youtube";
-import { initKickBot } from "./services/kick";
+import { startTwitch } from "./services/twitch";
+import { startYouTube } from "./services/youtube";
+import { startKick } from "./services/kick";
+import { LogLine, LogSink, makeLog } from "./services/types";
+import { maskSecret } from "./services/security";
+import { BotContext } from "./services/context";
 
-// Create Express app
-const app = express();
+const MAX_LOGS = 200;
+const logs: LogLine[] = [];
 
-// Log capture system to display logs in real-time on the status dashboard
-const logs: string[] = [];
-const MAX_LOGS = 50;
-
-function addLog(msg: string) {
-  const timestamp = new Date().toLocaleTimeString();
-  logs.push(`[${timestamp}] ${msg}`);
-  if (logs.length > MAX_LOGS) {
-    logs.shift();
+function basicAuthMiddleware(user: string, password?: string) {
+  // If no password is configured, leave the dashboard open but warn (local dev).
+  if (!password) {
+    console.warn("[auth] DASHBOARD_PASSWORD not set; dashboard is unprotected.");
+    return (_req: express.Request, _res: express.Response, next: express.NextFunction) => next();
   }
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const header = req.headers["authorization"];
+    if (!header || !header.startsWith("Basic ")) {
+      res.set("WWW-Authenticate", 'Basic realm="Makima Dashboard"');
+      res.status(401).send("Authentication required.");
+      return;
+    }
+    const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+    const [u, p] = decoded.split(":");
+    if (u === user && p === password) {
+      next();
+    } else {
+      res.set("WWW-Authenticate", 'Basic realm="Makima Dashboard"');
+      res.status(401).send("Invalid credentials.");
+    }
+  };
 }
 
-// Intercept system logs
-const originalLog = console.log;
-const originalError = console.error;
-const originalWarn = console.warn;
+async function main() {
+  let config;
+  try {
+    config = loadConfig();
+  } catch (err) {
+    console.error("Failed to load configuration:", (err as Error).message);
+    process.exit(1);
+  }
 
-console.log = (...args: any[]) => {
-  const msg = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(" ");
-  originalLog(...args);
-  addLog(msg);
-};
+  const store = await createStateStore(config);
 
-console.error = (...args: any[]) => {
-  const msg = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(" ");
-  originalError(...args);
-  addLog(`❌ ERROR: ${msg}`);
-};
+  const logSink: LogSink = (platform, level, message) => {
+    const line: LogLine = { ts: Date.now(), platform, level, message };
+    logs.push(line);
+    if (logs.length > MAX_LOGS) logs.shift();
+    const prefix = `[${platform}]`;
+    const fn =
+      level === "error" ? console.error : level === "warn" ? console.warn : console.log;
+    fn(prefix, message);
+  };
+  const log = makeLog(logSink);
 
-console.warn = (...args: any[]) => {
-  const msg = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(" ");
-  originalWarn(...args);
-  addLog(`⚠️ WARN: ${msg}`);
-};
+  const queues = createQueues(config.throttle, log);
 
-// Validate environment config on start
-validateConfig();
+  const ctx: BotContext = { config, store, queues, log };
 
-// Serve static dashboard
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "..", "src", "public", "index.html"));
-});
+  log("system", "info", "Starting Makima Live Stream AI Chatbot (production build)...");
+  log("system", "info", `Twitch token: ${maskSecret(config.twitch.oauthToken)}`);
+  log("system", "info", `Kick token: ${maskSecret(config.kick.bearerToken)}`);
 
-// Ping endpoint for keep-alive and health checks
-app.get("/ping", (req, res) => {
-  res.status(200).json({ status: "alive", timestamp: new Date().toISOString() });
-});
-
-app.get("/health", (req, res) => {
-  res.status(200).json({ ok: true });
-});
-
-// Status API for frontend updates
-app.get("/api/status", (req, res) => {
-  res.json({
-    twitch: {
-      status: config.twitch.channel ? "online" : "offline",
-      channel: config.twitch.channel,
-      mode: (config.twitch.botUsername && config.twitch.oauthToken) ? "Read/Write" : "Read-Only"
-    },
-    youtube: {
-      status: config.youtube.channelId ? "online" : "offline",
-      channelId: config.youtube.channelId,
-      mode: (config.youtube.clientId && config.youtube.clientSecret && config.youtube.refreshToken) ? "Read/Write" : "Read-Only"
-    },
-    kick: {
-      status: config.kick.channelName ? "online" : "offline",
-      channelName: config.kick.channelName,
-      mode: config.kick.botToken ? "Read/Write" : "Read-Only"
-    },
-    ai: {
-      primary: config.groq.primaryModel,
-      fallback: config.groq.fallbackModel
-    },
-    logs: logs.slice().reverse()
+  // Process-level watchdog: keep the daemon alive on unexpected errors.
+  process.on("unhandledRejection", (reason) => {
+    log("system", "error", `Unhandled rejection: ${String(reason)}`);
   });
-});
+  process.on("uncaughtException", (err) => {
+    log("system", "error", `Uncaught exception: ${err.message}`);
+  });
 
-// Start Express server
-app.listen(config.port, "0.0.0.0", () => {
-  console.log(`==================================================`);
-  console.log(`🚀 Makima Chatbot server started on port ${config.port}`);
-  console.log(`==================================================`);
-  
-  // Start Keep-Alive Auto-Ping Service
+  const app = express();
+  app.use(express.json());
+
+  const auth = basicAuthMiddleware(config.dashboard.user, config.dashboard.password);
+
+  app.get("/health", (_req, res) => {
+    res.json({ status: "ok", uptime: process.uptime() });
+  });
+
+  app.get("/", auth, (req, res) => {
+    res.sendFile("index.html", { root: "src/public" });
+  });
+
+  app.get("/api/status", auth, (_req, res) => {
+    const statusOf = (configured: boolean) => (configured ? "online" : "offline");
+    res.json({
+      twitch: {
+        status: statusOf(Boolean(config.twitch.channel)),
+        channel: config.twitch.channel ?? "Not configured",
+        mode: "Listener + Rate-Limited Queue",
+      },
+      youtube: {
+        status: statusOf(Boolean(config.youtube.videoId || config.youtube.channelHandle)),
+        channelId: config.youtube.videoId ?? "Not configured",
+        mode: "Scrape Listener + API Sender",
+      },
+      kick: {
+        status: statusOf(Boolean(config.kick.chatroomId)),
+        channelName: config.kick.chatroomId ?? "Not configured",
+        mode: "Pusher Listener + Custom Sender",
+      },
+      ai: {
+        primary: config.groq.primaryModel,
+        fallback: config.groq.fallbackModel,
+      },
+      logs: logs.slice(-MAX_LOGS).map((l) => `[${l.platform}] ${l.message}`),
+    });
+  });
+
+  app.get("/ping", (_req, res) => {
+    res.json({ ok: true, time: Date.now() });
+  });
+
+  app.listen(config.port, () => {
+    log("system", "info", `Dashboard listening on http://localhost:${config.port}`);
+  });
+
   startAutoPing();
-  
-  // Initialize stream integrations
-  initTwitchBot();
-  initYoutubeBot();
-  initKickBot();
-});
+  startTwitch(ctx);
+  startYouTube(ctx);
+  startKick(ctx);
+}
+
+main();

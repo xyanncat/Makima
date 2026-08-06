@@ -1,160 +1,211 @@
 import { LiveChat } from "youtube-chat";
-import { google } from "googleapis";
-import { config } from "../config";
+import { COMMAND_PREFIX } from "../config";
+import { BotContext, guardMessage } from "./context";
 import { generateResponse } from "./ai";
+import { OAuthTokenRecord } from "./db";
 
-let oauth2Client: any = null;
-let youtube: any = null;
-let activeLiveChatId: string | null = null;
-let isWritable = false;
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
-// Initialize official YouTube Data API client if credentials exist
-function initYoutubeWriteClient() {
-  if (
-    config.youtube.clientId &&
-    config.youtube.clientSecret &&
-    config.youtube.refreshToken
-  ) {
-    try {
-      oauth2Client = new google.auth.OAuth2(
-        config.youtube.clientId,
-        config.youtube.clientSecret,
-        "http://localhost:3000/oauth2callback"
-      );
-      
-      oauth2Client.setCredentials({
-        refresh_token: config.youtube.refreshToken,
-      });
-
-      youtube = google.youtube({
-        version: "v3",
-        auth: oauth2Client,
-      });
-      
-      isWritable = true;
-      console.log("[YouTube] Official API client initialized. Messages can be sent to chat.");
-    } catch (err: any) {
-      console.error("[YouTube] Failed to initialize write client:", err.message || err);
-      isWritable = false;
-    }
-  } else {
-    console.log("[YouTube] OAuth credentials missing. Running in anonymous READ-ONLY mode.");
-    isWritable = false;
-  }
+interface GoogleTokenResponse {
+  access_token: string;
+  expires_in: number;
+  refresh_token?: string;
 }
 
-// Fetch the active liveChatId using the video/live ID
-async function fetchLiveChatId(liveId: string): Promise<string | null> {
-  if (!youtube) return null;
+async function refreshAccessToken(
+  refreshToken: string,
+  clientId: string,
+  clientSecret: string
+): Promise<GoogleTokenResponse> {
+  const body = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    refresh_token: refreshToken,
+    grant_type: "refresh_token",
+  });
+  const res = await fetch(GOOGLE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  if (!res.ok) {
+    throw new Error(`Google token endpoint (${res.status}): ${await res.text()}`);
+  }
+  return (await res.json()) as GoogleTokenResponse;
+}
+
+/**
+ * Returns a valid YouTube access token, transparently refreshing it when the
+ * stored token is missing or within the configured refresh buffer.
+ */
+async function ensureYouTubeToken(ctx: BotContext): Promise<string | null> {
+  const now = Date.now();
+  const buffer = ctx.config.tokenRefreshBufferSec * 1000;
+
+  const rec = await ctx.store.getToken("youtube");
+  if (rec?.access_token && rec.expires_at && rec.expires_at - now > buffer) {
+    return rec.access_token;
+  }
+
+  const refreshToken = rec?.refresh_token ?? ctx.config.youtube.refreshToken;
+  const clientId = rec?.client_id ?? ctx.config.youtube.clientId;
+  const clientSecret = rec?.client_secret ?? ctx.config.youtube.clientSecret;
+
+  if (!refreshToken || !clientId || !clientSecret) return null;
+
   try {
-    const response = await youtube.videos.list({
-      part: ["liveStreamingDetails"],
-      id: [liveId],
-    });
-    
-    const liveChatId = response.data.items?.[0]?.liveStreamingDetails?.activeLiveChatId;
-    return liveChatId || null;
-  } catch (error: any) {
-    console.error(`[YouTube] Error fetching liveChatId for liveId ${liveId}:`, error.message || error);
+    const tok = await refreshAccessToken(refreshToken, clientId, clientSecret);
+    const expiresAt = now + tok.expires_in * 1000;
+    const updated: OAuthTokenRecord = {
+      platform: "youtube",
+      client_id: clientId,
+      client_secret: clientSecret,
+      access_token: tok.access_token,
+      refresh_token: tok.refresh_token ?? refreshToken,
+      expires_at: expiresAt,
+    };
+    await ctx.store.saveToken(updated);
+    ctx.log("youtube", "info", `Access token refreshed (expires in ${tok.expires_in}s).`);
+    return tok.access_token;
+  } catch (err) {
+    ctx.log("youtube", "error", `YouTube token refresh failed: ${(err as Error).message}`);
     return null;
   }
 }
 
-// Post a message using the YouTube Data API
-async function sendChatMessage(messageText: string) {
-  if (!isWritable || !youtube || !activeLiveChatId) {
-    console.log(`[YouTube] [READ-ONLY/PENDING] Message not sent: "${messageText}"`);
-    return;
+async function sendYouTubeMessage(
+  videoId: string,
+  accessToken: string,
+  message: string
+): Promise<void> {
+  const metaRes = await fetch(
+    `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${videoId}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  const meta = (await metaRes.json()) as any;
+  const liveChatId = meta?.items?.[0]?.liveStreamingDetails?.activeLiveChatId;
+  if (!liveChatId) {
+    throw new Error("No active live chat found for this video.");
   }
-  
-  try {
-    await youtube.liveChatMessages.insert({
-      part: ["snippet"],
-      requestBody: {
-        snippet: {
-          liveChatId: activeLiveChatId,
-          type: "textMessageEvent",
-          textMessageDetails: {
-            messageText: messageText,
-          },
-        },
+
+  const insertRes = await fetch(
+    "https://www.googleapis.com/youtube/v3/liveChatMessages?part=snippet",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
       },
-    });
-    console.log(`[YouTube] Replied: "${messageText}"`);
-  } catch (error: any) {
-    console.error("[YouTube] Error inserting chat message:", error.message || error);
+      body: JSON.stringify({
+        snippet: {
+          liveChatId,
+          type: "textMessageEvent",
+          textMessageDetails: { messageText: message },
+        },
+      }),
+    }
+  );
+
+  if (!insertRes.ok) {
+    throw new Error(`YouTube send (${insertRes.status}): ${await insertRes.text()}`);
   }
 }
 
-export function initYoutubeBot() {
-  if (!config.youtube.channelId) {
-    console.log("[YouTube] YOUTUBE_CHANNEL_ID not set. Skipping YouTube bot initialization.");
+function chatText(message: any[]): string {
+  return (message ?? [])
+    .map((m) => (typeof m?.text === "string" ? m.text : m?.emojiText ?? ""))
+    .join("");
+}
+
+export function startYouTube(ctx: BotContext): void {
+  const { config, queues, log } = ctx;
+  const { videoId, channelId, channelHandle } = config.youtube;
+
+  if (!videoId && !channelId && !channelHandle) {
+    log("youtube", "warn", "No YOUTUBE_VIDEO_ID / YOUTUBE_CHANNEL_ID / YOUTUBE_CHANNEL_HANDLE set. Skipping YouTube client.");
     return;
   }
 
-  initYoutubeWriteClient();
+  const id = videoId
+    ? { liveId: videoId }
+    : channelId
+    ? { channelId }
+    : { handle: channelHandle! };
+  const liveId = videoId;
 
-  console.log(`[YouTube] Connecting to channel ID: ${config.youtube.channelId}...`);
-  const liveChat = new LiveChat({ channelId: config.youtube.channelId });
+  const client = new LiveChat(id);
 
-  liveChat.on("start", async (liveId) => {
-    console.log(`[YouTube] Chat listener started for live/video ID: ${liveId}`);
-    
-    if (isWritable) {
-      console.log("[YouTube] Attempting to resolve activeLiveChatId...");
-      activeLiveChatId = await fetchLiveChatId(liveId);
-      if (activeLiveChatId) {
-        console.log(`[YouTube] Resolved activeLiveChatId: ${activeLiveChatId}`);
-      } else {
-        console.warn("[YouTube] Could not resolve activeLiveChatId. Replies will not be sent.");
-      }
-    }
-  });
+  client.on("chat", async (chat: any) => {
+    const text: string = chatText(chat.message);
+    const author: string = chat.author?.name ?? "unknown";
+    const trimmed = text.trim();
+    if (!trimmed.toLowerCase().startsWith(COMMAND_PREFIX)) return;
 
-  liveChat.on("chat", async (chatItem) => {
-    const messageText = chatItem.message.map((m: any) => m.text || "").join("").trim();
-    
-    if (messageText.startsWith("!makima")) {
-      const authorName = chatItem.author.name;
-      console.log(`[YouTube] Command trigger from ${authorName}: "${messageText}"`);
-      
-      const prompt = messageText.slice("!makima".length).trim();
-      
+    const prompt = trimmed.slice(COMMAND_PREFIX.length).trim();
+    if (prompt.length === 0) return;
+
+    const messageId = chat.id ?? `${author}:${prompt}:${Date.now()}`;
+    const guard = await guardMessage(ctx, "youtube", messageId, author, prompt);
+    if (!guard.ok) return;
+
+    log("youtube", "info", `<${author}>: ${prompt}`);
+
+    queues.youtube.enqueue(async () => {
+      const started = Date.now();
       try {
-        const response = await generateResponse(prompt || "hello");
-        const formattedResponse = `@${authorName} ${response}`;
-        
-        await sendChatMessage(formattedResponse);
-      } catch (error: any) {
-        console.error("[YouTube] Failed to generate AI response:", error.message || error);
-        await sendChatMessage(`@${authorName} I am busy. Try again later.`);
+        if (!liveId) {
+          log("youtube", "warn", "Channel-handle mode requires a video id to send; skipping.");
+          return;
+        }
+        const accessToken = await ensureYouTubeToken(ctx);
+        if (!accessToken) {
+          log("youtube", "warn", "(no YouTube credentials) skipping send.");
+          return;
+        }
+        const replyText = await generateResponse(prompt);
+        await sendYouTubeMessage(liveId, accessToken, replyText);
+        log("youtube", "info", `-> ${replyText}`);
+        await ctx.store.logCommand({
+          platform: "youtube",
+          user: author,
+          prompt,
+          model: "groq",
+          latencyMs: Date.now() - started,
+          ts: Date.now(),
+        });
+      } catch (err) {
+        log("youtube", "error", `YouTube send error: ${(err as Error).message}`);
+        await ctx.store.logCommand({
+          platform: "youtube",
+          user: author,
+          prompt,
+          error: (err as Error).message,
+          latencyMs: Date.now() - started,
+          ts: Date.now(),
+        });
       }
-    }
+    });
   });
 
-  liveChat.on("error", (err) => {
-    console.error("[YouTube] Scraper error occurred:", err);
+  client.on("error", (err: any) => {
+    log("youtube", "error", `YouTube listener error: ${err?.message ?? err}`);
   });
 
-  liveChat.on("end", (reason) => {
-    console.log(`[YouTube] Chat listener ended: ${reason}. Retrying in 30 seconds...`);
-    setTimeout(() => {
-      startListener(liveChat);
-    }, 30000);
+  client.on("end", () => {
+    log("youtube", "warn", "YouTube live chat stream ended.");
   });
 
-  startListener(liveChat);
-}
-
-async function startListener(liveChat: LiveChat) {
-  try {
-    const started = await liveChat.start();
-    if (!started) {
-      console.warn("[YouTube] Chat listener failed to start. Re-trying in 30 seconds...");
-      setTimeout(() => startListener(liveChat), 30000);
-    }
-  } catch (error: any) {
-    console.error("[YouTube] Exception starting chat listener:", error.message || error);
-    setTimeout(() => startListener(liveChat), 30000);
-  }
+  client
+    .start()
+    .then((ok: boolean) => {
+      if (ok) {
+        const label = videoId ? `video ${videoId}` : channelId ? `channel ${channelId}` : `handle ${channelHandle}`;
+        log("youtube", "info", `Listening to YouTube live chat (${label}).`);
+      } else {
+        log("youtube", "warn", "YouTube live chat did not start (stream may be offline).");
+      }
+    })
+    .catch((err: any) => {
+      log("youtube", "error", `YouTube start failed: ${err?.message ?? err}`);
+    });
 }

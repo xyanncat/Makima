@@ -1,78 +1,78 @@
 import tmi from "tmi.js";
-import { config } from "../config";
+import { COMMAND_PREFIX } from "../config";
+import { BotContext, guardMessage } from "./context";
 import { generateResponse } from "./ai";
+import { LogSink } from "./types";
 
-export function initTwitchBot() {
-  if (!config.twitch.channel) {
-    console.log("[Twitch] TWITCH_CHANNEL not set. Skipping Twitch bot initialization.");
+export function startTwitch(ctx: BotContext): void {
+  const { config, queues, log } = ctx;
+  const { username, oauthToken, channel } = config.twitch;
+  if (!username || !oauthToken || !channel) {
+    log("twitch", "warn", "Twitch credentials incomplete. Skipping Twitch client.");
     return;
   }
 
-  const channel = config.twitch.channel.toLowerCase();
-  
-  // Choose anonymous/read-only if OAuth details are missing
-  const isWritable = !!(config.twitch.botUsername && config.twitch.oauthToken);
-  
-  const clientOptions: any = {
-    options: { debug: false },
-    connection: {
-      reconnect: true,
-      secure: true,
+  const client: any = tmi.Client({
+    identity: {
+      username,
+      password: oauthToken,
     },
     channels: [channel],
-  };
-
-  if (isWritable) {
-    clientOptions.identity = {
-      username: config.twitch.botUsername,
-      password: config.twitch.oauthToken, // Should be format "oauth:xxxxxx"
-    };
-    console.log(`[Twitch] Initializing bot as user: ${config.twitch.botUsername}`);
-  } else {
-    console.log(`[Twitch] Initializing bot in anonymous READ-ONLY mode for channel: ${channel}`);
-  }
-
-  const client = new tmi.Client(clientOptions);
-
-  client.on("message", async (targetChannel: string, tags: any, message: string, self: boolean) => {
-    if (self) return; // Ignore messages from the bot itself
-
-    const normalizedMsg = message.trim();
-    if (normalizedMsg.startsWith("!makima")) {
-      const user = tags["display-name"] || tags.username || "Guest";
-      console.log(`[Twitch] Command trigger in ${targetChannel} from ${user}: "${normalizedMsg}"`);
-      
-      // Extract prompt
-      const prompt = normalizedMsg.slice("!makima".length).trim();
-      
-      try {
-        const response = await generateResponse(prompt || "hello");
-        const formattedResponse = `@${user}, ${response}`;
-        
-        if (isWritable) {
-          client.say(targetChannel, formattedResponse);
-          console.log(`[Twitch] Replied: "${formattedResponse}"`);
-        } else {
-          console.log(`[Twitch] [READ-ONLY] Would reply: "${formattedResponse}"`);
-        }
-      } catch (error: any) {
-        console.error("[Twitch] Failed to generate AI response:", error.message || error);
-        if (isWritable) {
-          client.say(targetChannel, `@${user}, I am currently busy. Please try again later.`);
-        }
-      }
-    }
   });
 
-  client.on("connected", (address: string, port: number) => {
-    console.log(`[Twitch] Connected to Twitch IRC at ${address}:${port}`);
+  client.on("message", async (channelName: string, _tags: any, message: string, self: boolean) => {
+    if (self) return;
+    const trimmed = message.trim();
+    if (!trimmed.toLowerCase().startsWith(COMMAND_PREFIX)) return;
+
+    const prompt = trimmed.slice(COMMAND_PREFIX.length).trim();
+    if (prompt.length === 0) return;
+
+    const author = (_tags?.["display-name"] as string) ?? "unknown";
+    const messageId = (_tags?.id as string) ?? `${author}:${prompt}:${Date.now()}`;
+
+    const guard = await guardMessage(ctx, "twitch", messageId, author, prompt);
+    if (!guard.ok) return;
+
+    log("twitch", "info", `<${author}>: ${prompt}`);
+
+    queues.twitch.enqueue(async () => {
+      const started = Date.now();
+      try {
+        const replyText = await generateResponse(prompt);
+        await client.say(channelName, replyText);
+        log("twitch", "info", `-> ${replyText}`);
+        await ctx.store.logCommand({
+          platform: "twitch",
+          user: author,
+          prompt,
+          model: "groq",
+          latencyMs: Date.now() - started,
+          ts: Date.now(),
+        });
+      } catch (err) {
+        log("twitch", "error", `AI error: ${(err as Error).message}`);
+        await ctx.store.logCommand({
+          platform: "twitch",
+          user: author,
+          prompt,
+          error: (err as Error).message,
+          latencyMs: Date.now() - started,
+          ts: Date.now(),
+        });
+      }
+    });
+  });
+
+  client.on("connected", (addr: string) => {
+    log("twitch", "info", `Connected to Twitch at ${addr} (channel: ${channel})`);
   });
 
   client.on("disconnected", (reason: string) => {
-    console.warn(`[Twitch] Disconnected: ${reason}`);
+    log("twitch", "warn", `Twitch disconnected: ${reason}`);
   });
 
   client.connect().catch((err: any) => {
-    console.error("[Twitch] Connection error:", err);
+    log("twitch", "error", `Twitch connect failed: ${(err as Error).message}`);
   });
 }

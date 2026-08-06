@@ -1,163 +1,207 @@
 import WebSocket from "ws";
-import axios from "axios";
-import { config } from "../config";
+import { COMMAND_PREFIX } from "../config";
+import { BotContext, guardMessage } from "./context";
 import { generateResponse } from "./ai";
+import { OAuthTokenRecord } from "./db";
 
-const PUSHER_KEY = "eb1d5f283081a78b932c";
-const PUSHER_CLUSTER = "us2";
+const KICK_PUSHER_KEY = "eb1d5f283081a78b932c";
+const KICK_PUSHER_HOST = "ws-us2.pusher.com";
+const KICK_CHAT_EVENT = "App\\Events\\ChatMessageSent";
+const KICK_TOKEN_URL = "https://id.kick.com/oauth/token";
 
-let ws: WebSocket | null = null;
-let isWritable = false;
-let resolvedChatroomId: string | null = null;
-
-// Initialize Kick sending status
-function initKickWriteClient() {
-  if (config.kick.botToken) {
-    isWritable = true;
-    console.log("[Kick] Bot token detected. Messages can be sent to Kick chat.");
-  } else {
-    console.log("[Kick] Bot token missing. Running in READ-ONLY mode on Kick.");
-    isWritable = false;
-  }
+interface KickChatPayload {
+  id?: string;
+  chatroom_id?: number;
+  sender?: { username?: string };
+  content?: string;
+  message?: string;
 }
 
-// Fetch Kick Chatroom ID from channel username (with User-Agent to help bypass simple checks)
-async function getChatroomId(channelName: string): Promise<string> {
-  if (config.kick.chatroomId) {
-    return config.kick.chatroomId;
-  }
-  
-  try {
-    console.log(`[Kick] Attempting to auto-resolve Chatroom ID for channel: ${channelName}`);
-    const response = await axios.get(`https://kick.com/api/v2/channels/${channelName}`, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json"
+function decodeKickPayload(raw: unknown): KickChatPayload | null {
+  if (typeof raw === "string") {
+    try {
+      const json = Buffer.from(raw, "base64").toString("utf8");
+      return JSON.parse(json) as KickChatPayload;
+    } catch {
+      try {
+        return JSON.parse(raw) as KickChatPayload;
+      } catch {
+        return null;
       }
-    });
-    
-    const chatroomId = response.data?.chatroom?.id;
-    if (chatroomId) {
-      return String(chatroomId);
     }
-    throw new Error("Chatroom ID not found in payload");
-  } catch (error: any) {
-    throw new Error(
-      `Failed to resolve Kick Chatroom ID for "${channelName}". ` +
-      `Error: ${error.message}. Please define KICK_CHATROOM_ID manually in your environment variables.`
-    );
+  }
+  if (raw && typeof raw === "object") return raw as KickChatPayload;
+  return null;
+}
+
+async function ensureKickToken(ctx: BotContext): Promise<string | null> {
+  const { config, store, log } = ctx;
+  const now = Date.now();
+  const buffer = config.tokenRefreshBufferSec * 1000;
+
+  const rec = await store.getToken("kick");
+  if (rec?.access_token && rec.expires_at && rec.expires_at - now > buffer) {
+    return rec.access_token;
+  }
+
+  const clientId = rec?.client_id ?? config.kick.clientId;
+  const clientSecret = rec?.client_secret ?? config.kick.clientSecret;
+
+  if (clientId && clientSecret) {
+    try {
+      const res = await fetch(KICK_TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "client_credentials",
+          client_id: clientId,
+          client_secret: clientSecret,
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { access_token: string; expires_in?: number };
+        const expiresAt = now + (data.expires_in ?? 3600) * 1000;
+        await store.saveToken({
+          platform: "kick",
+          client_id: clientId,
+          client_secret: clientSecret,
+          access_token: data.access_token,
+          expires_at: expiresAt,
+        });
+        log("kick", "info", "Access token refreshed via client credentials.");
+        return data.access_token;
+      }
+      log("kick", "warn", `Kick token refresh returned (${res.status}); falling back to static token.`);
+    } catch (err) {
+      log("kick", "error", `Kick token refresh failed: ${(err as Error).message}`);
+    }
+  }
+
+  return config.kick.bearerToken ?? null;
+}
+
+async function sendKickMessage(
+  chatroomId: string,
+  bearerToken: string,
+  message: string
+): Promise<void> {
+  const res = await fetch("https://kick.com/api/v2/messages", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${bearerToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      content: message,
+      type: "message",
+      chatroom_id: Number(chatroomId),
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Kick send (${res.status}): ${await res.text()}`);
   }
 }
 
-// Send message to Kick chat via HTTP request
-async function sendKickMessage(chatroomId: string, messageText: string) {
-  if (!isWritable || !config.kick.botToken) {
-    console.log(`[Kick] [READ-ONLY] Message not sent: "${messageText}"`);
+export function startKick(ctx: BotContext): void {
+  const { config, queues, log } = ctx;
+  const { chatroomId } = config.kick;
+  if (!chatroomId) {
+    log("kick", "warn", "KICK_CHATROOM_ID not set. Skipping Kick client.");
     return;
   }
 
-  // Support both official endpoint and unofficial v2 endpoint
-  // Unofficial: https://kick.com/api/v2/messages
-  // Official: https://api.kick.com/public/v1/chat (if using developer account)
-  const isOfficialToken = config.kick.botToken.startsWith("sk_");
-  const url = isOfficialToken 
-    ? "https://api.kick.com/public/v1/chat"
-    : `https://kick.com/api/v2/messages`;
+  const channelName = `chatrooms.${chatroomId}.v2`;
+  let ws: WebSocket | null = null;
+  let backoff = 2000;
+  let stopped = false;
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Authorization": config.kick.botToken.startsWith("Bearer ") 
-      ? config.kick.botToken 
-      : `Bearer ${config.kick.botToken}`
+  const connect = () => {
+    if (stopped) return;
+    const url = `wss://${KICK_PUSHER_HOST}/app/${KICK_PUSHER_KEY}?protocol=7&client=js&version=8.4.0&flash=false`;
+    ws = new WebSocket(url);
+
+    ws.on("open", () => {
+      backoff = 2000;
+      ws!.send(JSON.stringify({ event: "pusher:subscribe", data: { auth: "", channel: channelName } }));
+      log("kick", "info", `Connected to Kick Pusher (${channelName}).`);
+    });
+
+    ws.on("message", (data: WebSocket.RawData) => {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(data.toString());
+      } catch {
+        return;
+      }
+
+      if (parsed.event === "pusher:ping") {
+        ws!.send(JSON.stringify({ event: "pusher:pong", data: {} }));
+        return;
+      }
+      if (parsed.event !== KICK_CHAT_EVENT) return;
+
+      const payload = decodeKickPayload(parsed.data);
+      if (!payload) return;
+
+      const text: string = payload.content ?? payload.message ?? "";
+      const author: string = payload.sender?.username ?? "unknown";
+      const trimmed = text.trim();
+      if (!trimmed.toLowerCase().startsWith(COMMAND_PREFIX)) return;
+
+      const prompt = trimmed.slice(COMMAND_PREFIX.length).trim();
+      if (prompt.length === 0) return;
+
+      const messageId = payload.id ?? `${author}:${prompt}:${Date.now()}`;
+      void (async () => {
+        const guard = await guardMessage(ctx, "kick", messageId, author, prompt);
+        if (!guard.ok) return;
+        log("kick", "info", `<${author}>: ${prompt}`);
+
+        queues.kick.enqueue(async () => {
+          const started = Date.now();
+          try {
+            const token = await ensureKickToken(ctx);
+            if (!token) {
+              log("kick", "warn", "(no Kick credentials) skipping send.");
+              return;
+            }
+            const replyText = await generateResponse(prompt);
+            await sendKickMessage(chatroomId, token, replyText);
+            log("kick", "info", `-> ${replyText}`);
+            await ctx.store.logCommand({
+              platform: "kick",
+              user: author,
+              prompt,
+              model: "groq",
+              latencyMs: Date.now() - started,
+              ts: Date.now(),
+            });
+          } catch (err) {
+            log("kick", "error", `Kick send error: ${(err as Error).message}`);
+            await ctx.store.logCommand({
+              platform: "kick",
+              user: author,
+              prompt,
+              error: (err as Error).message,
+              latencyMs: Date.now() - started,
+              ts: Date.now(),
+            });
+          }
+        });
+      })();
+    });
+
+    ws.on("close", () => {
+      if (stopped) return;
+      log("kick", "warn", `Kick connection closed. Reconnecting in ${backoff / 1000}s.`);
+      setTimeout(connect, backoff);
+      backoff = Math.min(backoff * 2, 5 * 60 * 1000);
+    });
+
+    ws.on("error", (err: Error) => {
+      log("kick", "error", `Kick socket error: ${err.message}`);
+    });
   };
 
-  const body = isOfficialToken
-    ? { content: messageText, type: "bot" }
-    : { content: messageText, type: "message", chatroom_id: parseInt(chatroomId, 10) };
-
-  try {
-    const res = await axios.post(url, body, { headers });
-    console.log(`[Kick] Replied: "${messageText}" (Status ${res.status})`);
-  } catch (error: any) {
-    console.error("[Kick] Error sending message:", error.response?.data || error.message);
-  }
-}
-
-export async function initKickBot() {
-  if (!config.kick.channelName) {
-    console.log("[Kick] KICK_CHANNEL_NAME not set. Skipping Kick bot initialization.");
-    return;
-  }
-
-  initKickWriteClient();
-
-  try {
-    resolvedChatroomId = await getChatroomId(config.kick.channelName);
-    console.log(`[Kick] Resolved Chatroom ID: ${resolvedChatroomId}. Connecting to WebSockets...`);
-    connectToPusher(resolvedChatroomId);
-  } catch (err: any) {
-    console.error(`[Kick] Initialization failed:`, err.message || err);
-  }
-}
-
-function connectToPusher(chatroomId: string) {
-  const wsUrl = `wss://ws-${PUSHER_CLUSTER}.pusher.com/app/${PUSHER_KEY}?protocol=7&client=js&version=8.4.0&flash=false`;
-  
-  ws = new WebSocket(wsUrl);
-
-  ws.on("open", () => {
-    console.log("[Kick] Connected to Pusher WebSocket");
-    
-    // Subscribe to chatroom channel
-    const subscribePayload = {
-      event: "pusher:subscribe",
-      data: {
-        channel: `chatrooms.${chatroomId}.v2`
-      }
-    };
-    
-    ws?.send(JSON.stringify(subscribePayload));
-    console.log(`[Kick] Subscribed to channel chatrooms.${chatroomId}.v2`);
-  });
-
-  ws.on("message", async (data: string) => {
-    try {
-      const parsed = JSON.parse(data);
-      
-      if (parsed.event === "App\\Events\\ChatMessageEvent") {
-        const chatItem = JSON.parse(parsed.data);
-        const username = chatItem.sender?.username;
-        const messageText = (chatItem.content || "").trim();
-
-        if (messageText.startsWith("!makima")) {
-          console.log(`[Kick] Command trigger from ${username}: "${messageText}"`);
-          
-          const prompt = messageText.slice("!makima".length).trim();
-          
-          try {
-            const response = await generateResponse(prompt || "hello");
-            const formattedResponse = `@${username} ${response}`;
-            
-            await sendKickMessage(chatroomId, formattedResponse);
-          } catch (error: any) {
-            console.error("[Kick] Failed to generate AI response:", error.message || error);
-            await sendKickMessage(chatroomId, `@${username} I'm currently busy. Try again later.`);
-          }
-        }
-      }
-    } catch (e: any) {
-      // Ignore parsing errors of non-chat events (like connection messages)
-    }
-  });
-
-  ws.on("close", (code, reason) => {
-    console.log(`[Kick] Connection closed (${code}): ${reason || "No reason"}. Reconnecting in 10s...`);
-    setTimeout(() => connectToPusher(chatroomId), 10000);
-  });
-
-  ws.on("error", (err) => {
-    console.error("[Kick] WebSocket error:", err.message || err);
-  });
+  connect();
 }
