@@ -1,5 +1,4 @@
 import { LiveChat } from "youtube-chat";
-import { COMMAND_PREFIX } from "../config";
 import { BotContext, guardMessage } from "./context";
 import { generateResponse } from "./ai";
 import { OAuthTokenRecord } from "./db";
@@ -117,35 +116,51 @@ function chatText(message: any[]): string {
     .join("");
 }
 
-export function startYouTube(ctx: BotContext): void {
+/** Starts a self-healing listener and returns an idempotent shutdown function. */
+export function startYouTube(ctx: BotContext): () => void {
   const { config, queues, log } = ctx;
-  const { videoId, channelId, channelHandle } = config.youtube;
+  const { channelId } = config.youtube;
 
-  if (!videoId && !channelId && !channelHandle) {
-    log("youtube", "warn", "No YOUTUBE_VIDEO_ID / YOUTUBE_CHANNEL_ID / YOUTUBE_CHANNEL_HANDLE set. Skipping YouTube client.");
-    return;
+  if (!channelId) {
+    log("youtube", "warn", "No YOUTUBE_CHANNEL_ID set. Skipping YouTube client.");
+    return () => undefined;
   }
 
-  const id = videoId
-    ? { liveId: videoId }
-    : channelId
-    ? { channelId }
-    : { handle: channelHandle! };
-  const liveId = videoId;
+  const id = { channelId };
+  let activeClient: LiveChat | null = null;
+  let reconnectTimer: NodeJS.Timeout | null = null;
+  let reconnectDelayMs = 5_000;
+  let generation = 0;
+  let stopped = false;
+  const maxReconnectDelayMs = 300_000;
 
-  const client = new LiveChat(id);
+  const scheduleReconnect = (session: number) => {
+    if (stopped || session !== generation || reconnectTimer) return;
+    const delay = reconnectDelayMs;
+    log("youtube", "info", `Reconnecting YouTube chat client in ${delay / 1000}s...`);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      reconnectDelayMs = Math.min(reconnectDelayMs * 2, maxReconnectDelayMs);
+      startSession();
+    }, delay);
+    reconnectTimer.unref();
+  };
 
-  client.on("chat", async (chat: any) => {
+  const handleChat = async (client: LiveChat, chat: any) => {
     const text: string = chatText(chat.message);
     const author: string = chat.author?.name ?? "unknown";
+    const authorId: string = chat.author?.channelId ?? author;
     const trimmed = text.trim();
-    if (!trimmed.toLowerCase().startsWith(COMMAND_PREFIX)) return;
+    if (!trimmed.toLowerCase().startsWith(config.commandPrefix)) return;
 
-    const prompt = trimmed.slice(COMMAND_PREFIX.length).trim();
+    const prompt = trimmed.slice(config.commandPrefix.length).trim();
     if (prompt.length === 0) return;
 
-    const messageId = chat.id ?? `${author}:${prompt}:${Date.now()}`;
-    const guard = await guardMessage(ctx, "youtube", messageId, author, prompt);
+    // youtube-chat does not expose YouTube's message id. Its timestamp is stable
+    // across a replay, unlike Date.now(), so it still makes deduplication useful.
+    const timestamp = chat.timestamp instanceof Date ? chat.timestamp.getTime() : String(chat.timestamp ?? "unknown");
+    const messageId = `youtube:${authorId}:${timestamp}:${trimmed}`;
+    const guard = await guardMessage(ctx, "youtube", messageId, authorId, prompt);
     if (!guard.ok) return;
 
     log("youtube", "info", `<${author}>: ${prompt}`);
@@ -153,8 +168,9 @@ export function startYouTube(ctx: BotContext): void {
     queues.youtube.enqueue(async () => {
       const started = Date.now();
       try {
-        if (!liveId) {
-          log("youtube", "warn", "Channel-handle mode requires a video id to send; skipping.");
+        const activeVideoId = client.liveId;
+        if (!activeVideoId) {
+          log("youtube", "warn", "No active live video ID found; skipping response.");
           return;
         }
         const accessToken = await ensureYouTubeToken(ctx);
@@ -163,7 +179,7 @@ export function startYouTube(ctx: BotContext): void {
           return;
         }
         const replyText = await generateResponse(prompt);
-        await sendYouTubeMessage(liveId, accessToken, replyText);
+        await sendYouTubeMessage(activeVideoId, accessToken, replyText);
         log("youtube", "info", `-> ${replyText}`);
         await ctx.store.logCommand({
           platform: "youtube",
@@ -185,27 +201,57 @@ export function startYouTube(ctx: BotContext): void {
         });
       }
     });
-  });
+  };
 
-  client.on("error", (err: any) => {
-    log("youtube", "error", `YouTube listener error: ${err?.message ?? err}`);
-  });
+  function startSession(): void {
+    if (stopped) return;
+    const session = ++generation;
+    const previous = activeClient;
+    activeClient = null;
+    // Incrementing generation above makes end/error events from the old client inert.
+    if (previous) previous.stop("replaced by new session");
 
-  client.on("end", () => {
-    log("youtube", "warn", "YouTube live chat stream ended.");
-  });
-
-  client
-    .start()
-    .then((ok: boolean) => {
+    const client = new LiveChat(id);
+    activeClient = client;
+    client.on("chat", (chat: any) => {
+      void handleChat(client, chat).catch((err) =>
+        log("youtube", "error", `YouTube chat handling failed: ${(err as Error).message}`)
+      );
+    });
+    client.on("error", (err: any) => {
+      if (session !== generation || stopped) return;
+      log("youtube", "error", `YouTube listener error: ${err?.message ?? err}`);
+      scheduleReconnect(session);
+    });
+    client.on("end", () => {
+      if (session !== generation || stopped) return;
+      log("youtube", "warn", "YouTube live chat stream ended.");
+      scheduleReconnect(session);
+    });
+    void client.start().then((ok: boolean) => {
+      if (session !== generation || stopped) return;
       if (ok) {
-        const label = videoId ? `video ${videoId}` : channelId ? `channel ${channelId}` : `handle ${channelHandle}`;
+        reconnectDelayMs = 5_000;
+        const label = `channel ${channelId}`;
         log("youtube", "info", `Listening to YouTube live chat (${label}).`);
       } else {
-        log("youtube", "warn", "YouTube live chat did not start (stream may be offline).");
+        log("youtube", "warn", "YouTube live chat did not start (stream may be offline); retrying.");
+        scheduleReconnect(session);
       }
-    })
-    .catch((err: any) => {
+    }).catch((err: any) => {
+      if (session !== generation || stopped) return;
       log("youtube", "error", `YouTube start failed: ${err?.message ?? err}`);
+      scheduleReconnect(session);
     });
+  }
+
+  startSession();
+  return () => {
+    stopped = true;
+    generation++;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    activeClient?.stop("application shutdown");
+    activeClient = null;
+  };
 }

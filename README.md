@@ -56,24 +56,29 @@ To boot the bot, configure the following variables inside a local `.env` file or
 
 ### System Config
 *   `PORT`: Port of the express telemetry server (default `3000`).
-*   `RENDER_EXTERNAL_URL`: Public URL of your deployed Render app (e.g. `https://makima.onrender.com`). Enables the **keep-alive auto-ping task**.
+*   `RENDER_EXTERNAL_URL`: Public URL of your deployed Render app (e.g. `https://makima.onrender.com`). Enables the optional in-process health check; it is not a guaranteed keep-alive mechanism.
 
 ### AI Settings
 *   `GROQ_API_KEY`: Your Groq Cloud access key.
 *   `GROQ_PRIMARY_MODEL`: Defaults to `llama-3.1-70b-versatile`.
 *   `GROQ_FALLBACK_MODEL`: Defaults to `llama-3.1-8b-instant`.
+*   `COMMAND_PREFIX`: Chat command trigger; defaults to `!`.
 
 <details>
 <summary><b>🔑 Click to view Platform Connection Config</b></summary>
 
 ```ini
 # YouTube settings
+# Public channel mode: the channel ID is the only selector required.
 YOUTUBE_CHANNEL_ID=UCxxxxxxx
+YOUTUBE_RATE_LIMIT_WINDOW_SEC=10
 YOUTUBE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
 YOUTUBE_CLIENT_SECRET=gsecs_xxxxxxxxx
 YOUTUBE_REFRESH_TOKEN=1//0xxxxxxxxx
 ```
 </details>
+
+For durable OAuth tokens and command logs, set `DATABASE_URL` and apply [the initial schema migration](./migrations/001_initial_schema.sql) before starting the bot. Redis remains optional; without it, short-lived deduplication and rate-limit state is held in memory.
 
 ---
 
@@ -104,7 +109,7 @@ npm start
 
 ---
 
-## 🩸 Render Deployment (100% Uptime Free Hosting)
+## 🩸 Render Deployment
 
 1. Create a **Web Service** on [Render](https://dashboard.render.com/) linked to your repository.
 2. Build Settings:
@@ -113,4 +118,4 @@ npm start
    *   **Start Command:** `npm start`
    *   **Instance Type:** `Free`
 3. Add your environment variables in the **Environment** tab. Make sure `RENDER_EXTERNAL_URL` points to your public Render service domain.
-4. The server automatically triggers the ping utility every 10 minutes, keeping the container active 24/7!
+4. The server performs a best-effort health check every 10 minutes through `/health`. This confirms the app responds, but an app cannot reliably keep its own Render instance awake by pinging itself. For reliable wake-up monitoring, configure an external uptime monitor to request `https://<your-service>.onrender.com/health`. Render may still sleep or restart free instances according to its platform rules.

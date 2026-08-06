@@ -41,7 +41,7 @@ export async function guardMessage(
     return { ok: false, reason: "duplicate" };
   }
 
-  const limited = await ctx.store.isRateLimited(platform, user, 10);
+  const limited = await ctx.store.isRateLimited(platform, user, ctx.config.youtube.rateLimitWindowSec);
   if (limited) {
     ctx.log(platform, "warn", `User ${user} is rate-limited; ignoring.`);
     return { ok: false, reason: "ratelimited" };

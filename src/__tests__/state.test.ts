@@ -7,6 +7,7 @@ describe("StateStore (in-memory)", () => {
     expect(await store.markSeen("msg-1", 60)).toBe(true);
     expect(await store.markSeen("msg-1", 60)).toBe(false);
     expect(await store.markSeen("msg-2", 60)).toBe(true);
+    await store.close();
   });
 
   it("isRateLimited allows the first message and blocks the second within the window", async () => {
@@ -15,6 +16,7 @@ describe("StateStore (in-memory)", () => {
     expect(await store.isRateLimited("youtube", "alice", 10)).toBe(true);
     // Different user is unaffected.
     expect(await store.isRateLimited("youtube", "bob", 10)).toBe(false);
+    await store.close();
   });
 
   it("stores and retrieves an OAuth token", async () => {
@@ -22,6 +24,7 @@ describe("StateStore (in-memory)", () => {
     await store.saveToken({ platform: "youtube", access_token: "abc", refresh_token: "r", expires_at: Date.now() + 100000 });
     const tok = await store.getToken("youtube");
     expect(tok?.access_token).toBe("abc");
+    await store.close();
   });
 });
 

@@ -1,5 +1,6 @@
 import express from "express";
-import { loadConfig } from "./config";
+import path from "path";
+import { validateConfig } from "./config";
 import { createStateStore } from "./services/db";
 import { createQueues } from "./services/queue";
 import { startAutoPing } from "./services/ping";
@@ -24,7 +25,9 @@ function basicAuthMiddleware(user: string, password?: string) {
       return;
     }
     const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
-    const [u, p] = decoded.split(":");
+    const separator = decoded.indexOf(":");
+    const u = separator < 0 ? "" : decoded.slice(0, separator);
+    const p = separator < 0 ? "" : decoded.slice(separator + 1);
     if (u === user && p === password) {
       next();
     } else {
@@ -37,7 +40,7 @@ function basicAuthMiddleware(user: string, password?: string) {
 async function main() {
   let config;
   try {
-    config = loadConfig();
+    config = validateConfig();
   } catch (err) {
     console.error("Failed to load configuration:", (err as Error).message);
     process.exit(1);
@@ -79,17 +82,17 @@ async function main() {
     res.json({ status: "ok", uptime: process.uptime() });
   });
 
-  app.get("/", auth, (req, res) => {
-    res.sendFile("index.html", { root: "src/public" });
+  app.get("/", auth, (_req, res) => {
+    res.sendFile(path.join(__dirname, "public", "index.html"));
   });
 
   app.get("/api/status", auth, (_req, res) => {
     const statusOf = (configured: boolean) => (configured ? "online" : "offline");
     res.json({
       youtube: {
-        status: statusOf(Boolean(config.youtube.videoId || config.youtube.channelId || config.youtube.channelHandle)),
-        channelId: config.youtube.videoId ?? config.youtube.channelId ?? "Not configured",
-        mode: "LiveChat Listener + API Sender",
+        status: statusOf(Boolean(config.youtube.channelId)),
+        channelId: config.youtube.channelId ?? "Not configured",
+        mode: "Channel ID discovery + LiveChat Listener + API Sender",
       },
       ai: {
         primary: config.groq.primaryModel,
@@ -103,12 +106,26 @@ async function main() {
     res.json({ ok: true, time: Date.now() });
   });
 
-  app.listen(config.port, () => {
+  const server = app.listen(config.port, () => {
     log("system", "info", `Dashboard listening on http://localhost:${config.port}`);
   });
 
-  startAutoPing();
-  startYouTube(ctx);
+  const stopPing = startAutoPing();
+  const stopYouTube = startYouTube(ctx);
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log("system", "info", `${signal} received; shutting down.`);
+    stopPing();
+    stopYouTube();
+    server.close(() => {
+      void store.close().finally(() => process.exit(0));
+    });
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 main();

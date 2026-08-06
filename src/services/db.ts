@@ -39,6 +39,19 @@ export interface StateStore {
 class InMemoryStateStore implements StateStore {
   private kv = new Map<string, { value: unknown; exp: number }>();
   private tokens = new Map<string, OAuthTokenRecord>();
+  private readonly cleanupTimer: NodeJS.Timeout;
+
+  constructor() {
+    this.cleanupTimer = setInterval(() => this.cleanupExpired(), 5 * 60 * 1000);
+    this.cleanupTimer.unref();
+  }
+
+  private cleanupExpired(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.kv) {
+      if (entry.exp <= now) this.kv.delete(key);
+    }
+  }
 
   async markSeen(id: string, ttlSec: number): Promise<boolean> {
     const now = Date.now();
@@ -73,8 +86,64 @@ class InMemoryStateStore implements StateStore {
   }
 
   async close(): Promise<void> {
+    clearInterval(this.cleanupTimer);
     this.kv.clear();
     this.tokens.clear();
+  }
+}
+
+/** Database-only mode: durable tokens and audit logs without requiring Redis. */
+class PostgresStateStore implements StateStore {
+  private readonly ephemeral = new InMemoryStateStore();
+  private readonly pool: Pool;
+
+  constructor(databaseUrl: string) {
+    this.pool = new Pool({ connectionString: databaseUrl });
+  }
+
+  markSeen(id: string, ttlSec: number): Promise<boolean> {
+    return this.ephemeral.markSeen(id, ttlSec);
+  }
+
+  isRateLimited(platform: string, user: string, windowSec: number): Promise<boolean> {
+    return this.ephemeral.isRateLimited(platform, user, windowSec);
+  }
+
+  async getToken(platform: string): Promise<OAuthTokenRecord | null> {
+    const { rows } = await this.pool.query(
+      "SELECT platform, client_id, client_secret, access_token, refresh_token, expires_at FROM oauth_tokens WHERE platform = $1",
+      [platform]
+    );
+    const row = rows[0];
+    return row ? {
+      platform: row.platform, client_id: row.client_id, client_secret: row.client_secret,
+      access_token: row.access_token, refresh_token: row.refresh_token,
+      expires_at: row.expires_at ? Number(row.expires_at) : undefined,
+    } : null;
+  }
+
+  async saveToken(record: OAuthTokenRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO oauth_tokens (platform, client_id, client_secret, access_token, refresh_token, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (platform) DO UPDATE SET client_id = EXCLUDED.client_id, client_secret = EXCLUDED.client_secret,
+       access_token = EXCLUDED.access_token, refresh_token = EXCLUDED.refresh_token, expires_at = EXCLUDED.expires_at`,
+      [record.platform, record.client_id ?? null, record.client_secret ?? null, record.access_token ?? null,
+        record.refresh_token ?? null, record.expires_at ? new Date(record.expires_at) : null]
+    );
+  }
+
+  async logCommand(entry: CommandLogEntry): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO command_logs (platform, username, prompt, model, latency_ms, error, ts)
+       VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0))`,
+      [entry.platform, entry.user, entry.prompt, entry.model ?? null, entry.latencyMs ?? null, entry.error ?? null, entry.ts]
+    );
+  }
+
+  async close(): Promise<void> {
+    await this.ephemeral.close();
+    await this.pool.end();
   }
 }
 
@@ -201,6 +270,10 @@ export async function createStateStore(config: Config): Promise<StateStore> {
       return new InMemoryStateStore();
     }
     return store;
+  }
+  if (databaseUrl) {
+    console.log("[db] Using PostgreSQL for durable tokens and command logs; TTL state remains in memory.");
+    return new PostgresStateStore(databaseUrl);
   }
   console.log("[db] Using in-memory state store (set REDIS_URL / DATABASE_URL for persistence).");
   return new InMemoryStateStore();
