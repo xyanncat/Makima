@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="makima_banner.png" alt="Makima Banner" width="100%" style="border-radius: 12px; border: 1px solid #c92a2a; box-shadow: 0 0 20px rgba(201, 42, 42, 0.4);">
-</p>
+![Makima Banner](./makima_banner.png)
 
 <p align="center">
   <!-- Animated Control Matrix & Chains SVG -->
