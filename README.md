@@ -1,134 +1,208 @@
-# <p align="center"><img src="makima_banner.png" alt="Makima Bot Banner" width="100%"></p>
-
 <p align="center">
-  <img src="https://img.shields.io/badge/Status-Active-crimson?style=for-the-badge" alt="Status">
-  <img src="https://img.shields.io/badge/Model-Groq%20Llama%203.1-ff6b6b?style=for-the-badge" alt="AI Model">
-  <img src="https://img.shields.io/badge/Platforms-Twitch%20%7C%20YouTube%20%7C%20Kick-6236ff?style=for-the-badge" alt="Platforms">
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
+  <img src="makima_banner.png" alt="Makima Banner" width="100%" style="border-radius: 12px; border: 1px solid #c92a2a; box-shadow: 0 0 20px rgba(201, 42, 42, 0.4);">
 </p>
 
----
-
 <p align="center">
-  <!-- Animated SVG Badge -->
-  <svg width="240" height="240" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- Animated Control Matrix & Chains SVG -->
+  <svg width="600" height="150" viewBox="0 0 600 150" xmlns="http://www.w3.org/2000/svg">
     <style>
-      .pulse {
-        animation: pulse-glow 2s infinite ease-in-out;
+      .glow-text {
+        font-family: 'Cinzel', Georgia, serif;
+        fill: #ffffff;
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: 12px;
+        text-shadow: 0 0 10px #c92a2a, 0 0 20px #c92a2a, 0 0 30px #c92a2a;
+        animation: textFlicker 3s infinite alternate;
+      }
+      .subtitle-text {
+        font-family: 'Inter', sans-serif;
+        fill: #868e96;
+        font-size: 11px;
+        letter-spacing: 4px;
+        text-transform: uppercase;
+      }
+      .animated-chain {
+        stroke: #c92a2a;
+        stroke-width: 1.5;
+        stroke-dasharray: 200;
+        stroke-dashoffset: 400;
+        animation: drawChain 6s linear infinite;
+        opacity: 0.8;
+      }
+      .ring {
         transform-origin: center;
+        animation: spinRing 20s linear infinite;
       }
-      .rotate {
-        animation: spin 15s linear infinite;
+      .ring-reverse {
         transform-origin: center;
+        animation: spinRingRev 15s linear infinite;
       }
-      .dash {
-        stroke-dasharray: 280;
-        animation: draw 5s linear infinite;
+      @keyframes textFlicker {
+        0%, 100% { opacity: 0.95; text-shadow: 0 0 8px #c92a2a, 0 0 15px #c92a2a; }
+        50% { opacity: 1; text-shadow: 0 0 18px #c92a2a, 0 0 35px #c92a2a, 0 0 50px #c92a2a; }
+        92% { opacity: 0.9; }
+        93% { opacity: 0.5; }
+        94% { opacity: 0.9; }
       }
-      @keyframes pulse-glow {
-        0%, 100% { transform: scale(0.95); opacity: 0.8; filter: drop-shadow(0 0 4px #c92a2a); }
-        50% { transform: scale(1.02); opacity: 1; filter: drop-shadow(0 0 12px #c92a2a); }
+      @keyframes drawChain {
+        to { stroke-dashoffset: 0; }
       }
-      @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
+      @keyframes spinRing {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
       }
-      @keyframes draw {
-        0% { stroke-dashoffset: 560; }
-        100% { stroke-dashoffset: 0; }
+      @keyframes spinRingRev {
+        from { transform: rotate(360deg); }
+        to { transform: rotate(0deg); }
       }
     </style>
-    <!-- Background Circle -->
-    <circle cx="50" cy="50" r="45" fill="#0d0e12" stroke="rgba(255, 255, 255, 0.05)" stroke-width="2"/>
-    <!-- Animated Outer Ring -->
-    <circle class="rotate dash" cx="50" cy="50" r="40" fill="none" stroke="#c92a2a" stroke-width="1.5" stroke-dasharray="15, 8"/>
-    <!-- Animated Inner Ring -->
-    <circle class="rotate" cx="50" cy="50" r="34" fill="none" stroke="rgba(197, 27, 27, 0.4)" stroke-width="1" stroke-dasharray="3, 3" style="animation-direction: reverse; animation-duration: 8s;"/>
-    <!-- Glowing Center Logo -->
-    <g class="pulse">
-      <circle cx="50" cy="50" r="25" fill="rgba(22, 24, 30, 0.9)" stroke="#c92a2a" stroke-width="2"/>
-      <path d="M42 42 L58 58 M58 42 L42 58" stroke="#c92a2a" stroke-width="2" stroke-linecap="round"/>
-      <text x="50" y="52" fill="#fff" font-family="'Cinzel', Georgia, serif" font-size="6" font-weight="bold" text-anchor="middle" letter-spacing="1">MAKIMA</text>
+    <!-- Background Layer -->
+    <rect width="600" height="150" fill="#0d0e12" rx="10"/>
+    
+    <!-- Left Decorative Seals -->
+    <g transform="translate(60, 75)">
+      <circle class="ring" r="40" fill="none" stroke="rgba(201, 42, 42, 0.2)" stroke-width="1.5" stroke-dasharray="10 5"/>
+      <circle class="ring-reverse" r="30" fill="none" stroke="rgba(255, 255, 255, 0.05)" stroke-width="1" stroke-dasharray="4 2"/>
+      <path d="M-20 0 L20 0 M0 -20 L0 20" stroke="rgba(201, 42, 42, 0.3)" stroke-width="1"/>
     </g>
+
+    <!-- Right Decorative Seals -->
+    <g transform="translate(540, 75)">
+      <circle class="ring-reverse" r="40" fill="none" stroke="rgba(201, 42, 42, 0.2)" stroke-width="1.5" stroke-dasharray="10 5"/>
+      <circle class="ring" r="30" fill="none" stroke="rgba(255, 255, 255, 0.05)" stroke-width="1" stroke-dasharray="4 2"/>
+      <path d="M-20 0 L20 0 M0 -20 L0 20" stroke="rgba(201, 42, 42, 0.3)" stroke-width="1"/>
+    </g>
+
+    <!-- Connecting Animated Chain Lines -->
+    <path class="animated-chain" d="M110 55 L490 55" fill="none"/>
+    <path class="animated-chain" d="M490 95 L110 95" fill="none" style="animation-delay: -3s;"/>
+
+    <!-- Central Text -->
+    <text x="300" y="70" class="glow-text" text-anchor="middle">MAKIMA BOT</text>
+    <text x="300" y="105" class="subtitle-text" text-anchor="middle">CONTROL ENGINE v1.0.0 // GROQ AI</text>
   </svg>
 </p>
 
 <p align="center">
-  <i>"I love humans. In the same way that humans love dogs. They are loyal, easily handled, and quite clever."</i>
+  <a href="https://github.com/xyanncat/Makima/issues"><img src="https://img.shields.io/github/issues/xyanncat/Makima?color=c92a2a&style=for-the-badge" alt="Issues"></a>
+  <a href="https://github.com/xyanncat/Makima/stargazers"><img src="https://img.shields.io/github/stars/xyanncat/Makima?color=c92a2a&style=for-the-badge" alt="Stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-gray?style=for-the-badge" alt="License"></a>
+  <a href="https://render.com"><img src="https://img.shields.io/badge/Host-Render%20Free-2b8a3e?style=for-the-badge" alt="Host"></a>
 </p>
 
 <p align="center">
-  A premium, high-performance, multi-platform AI live stream chatbot styled after <b>Makima</b> from <i>Chainsaw Man</i>. Running exclusively on <b>Groq API</b> with automated model fallback and a built-in keep-alive self-ping dashboard.
+  ⛓️ <b>"Everything in this world is under my control. You will be too."</b> ⛓️
+</p>
+
+<p align="center">
+  A premium, high-performance, multi-platform AI live stream chatbot styled after the commanding persona of <b>Makima</b> from <i>Chainsaw Man</i>. Running exclusively on the ultra-fast <b>Groq API</b>, it automatically connects to and controls chatrooms on <b>Twitch</b>, <b>YouTube Live</b>, and <b>Kick</b> simultaneously.
 </p>
 
 ---
 
-## ⚡ Key Features
+## 👁️ Core Directives (Features)
 
-*   🧠 **Groq-Powered AI Engine:** Employs ultra-fast model inference with automatic fallback from `llama-3.1-70b-versatile` to `llama-3.1-8b-instant` to guarantee 100% uptime.
-*   🎭 **True Makima Persona:** Responses are short, polite, dominant, composed, and deliver a chilling undertone.
-*   📺 **Tri-Platform Integration:** Connects seamlessly to a single live stream channel on:
-    *   **Twitch:** Integrated with full read/write IRC message capability.
-    *   **YouTube:** Quota-efficient HTML polling for chat reading, Google APIs for replying.
-    *   **Kick:** Direct subscription to public Pusher WebSockets (no developer key needed to read chat).
-*   📊 **Visual Status Control Panel:** A gorgeous glassmorphism control panel showing live connection statuses and real-time logs.
-*   ☁️ **Render Free Tier Optimized:** Self-pinging cron system keeps the Render instance active and awake continuously.
+<table width="100%">
+  <tr>
+    <td width="33%" align="center">
+      <b>🐕 The Obedience Engine</b><br>
+      <i>Highly realistic Makima persona: polite, refined, dominant, and chilling. Zero emojis. Zero exclamation marks. Absolute control.</i>
+    </td>
+    <td width="33%" align="center">
+      <b>⚡ Light-Speed Groq AI</b><br>
+      <i>Utilizes Groq API with instant model fallbacks. Swaps from <b>Llama 3.1 70B</b> to <b>8B</b> instantly if rate-limits or outages are encountered.</i>
+    </td>
+    <td width="33%" align="center">
+      <b>📈 Live Analytics Board</b><br>
+      <i>A gorgeous glassmorphism status web interface serving real-time connection telemetry and live console log feeds.</i>
+    </td>
+  </tr>
+</table>
 
 ---
 
-## 🛠️ Quickstart Guide
+## ⛓️ Platform Integration Matrix
 
-### 1. Installation
-Clone the repository, configure the environment, and install dependencies:
+| Platform | Chat Listener | Chat Sender | Authentication Required |
+| :--- | :--- | :--- | :--- |
+| <img src="https://img.shields.io/badge/Twitch-9146FF?style=flat-square&logo=twitch&logoColor=white" height="20"> | **TMI.js Client** | **TMI.js IRC Writer** | Channel Name & OAuth Token |
+| <img src="https://img.shields.io/badge/YouTube-FF0000?style=flat-square&logo=youtube&logoColor=white" height="20"> | **HTML Chat Scraper** | **Google API Client** | OAuth2 Client ID & Refresh Token |
+| <img src="https://img.shields.io/badge/Kick-53FC18?style=flat-square&logo=kick&logoColor=black" height="20"> | **Pusher WebSockets** | **Direct HTTPS Post** | Account Session Auth Token |
+
+---
+
+## ⚙️ Deployment & Variables
+
+To boot the bot, configure the following variables inside a local `.env` file or in your **Render Environment Configuration**:
+
+### System Config
+*   `PORT`: Port of the express telemetry server (default `3000`).
+*   `RENDER_EXTERNAL_URL`: Public URL of your deployed Render app (e.g. `https://makima.onrender.com`). Enables the **keep-alive auto-ping task**.
+
+### AI Settings
+*   `GROQ_API_KEY`: Your Groq Cloud access key.
+*   `GROQ_PRIMARY_MODEL`: Defaults to `llama-3.1-70b-versatile`.
+*   `GROQ_FALLBACK_MODEL`: Defaults to `llama-3.1-8b-instant`.
+
+<details>
+<summary><b>🔑 Click to view Platform Connection Config</b></summary>
+
+```ini
+# Twitch settings
+TWITCH_CHANNEL=streamer_username
+TWITCH_BOT_USERNAME=bot_username
+TWITCH_OAUTH_TOKEN=oauth:xxxxxxxxxxxxxxxxxxxxx
+
+# YouTube settings
+YOUTUBE_CHANNEL_ID=UCxxxxxxx
+YOUTUBE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
+YOUTUBE_CLIENT_SECRET=gsecs_xxxxxxxxx
+YOUTUBE_REFRESH_TOKEN=1//0xxxxxxxxx
+
+# Kick settings
+KICK_CHANNEL_NAME=streamer_name
+KICK_CHATROOM_ID=1234567
+KICK_BOT_TOKEN=Bearer xxxxxxxxxxxxxxxxxx
+```
+</details>
+
+---
+
+## ⚡ Setup & Launch
+
 ```bash
+# 1. Clone repository
 git clone https://github.com/xyanncat/Makima.git
 cd Makima
+
+# 2. Install dependencies
 npm install
-```
 
-### 2. Configure Environment Variables
-Rename `.env.example` to `.env` and fill in the parameters:
-```bash
+# 3. Setup credentials
 cp .env.example .env
-```
+# (Fill in your Groq API key and credentials)
 
-### 3. YouTube OAuth Setup (For sending messages)
-If you want the bot to be able to talk back in YouTube Live Chat:
-1. Enable **YouTube Data API v3** in your [Google Cloud Console](https://console.cloud.google.com/).
-2. Setup an OAuth Client ID under **Web application** and add `http://localhost:3000/oauth2callback` to authorized redirects.
-3. Place `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET` in `.env`.
-4. Run the helper CLI to generate the refresh token:
-   ```bash
-   npm run get-yt-token
-   ```
-5. Approve the access and copy the generated `YOUTUBE_REFRESH_TOKEN` to your `.env` file.
+# 4. Generate YouTube Refresh Token (If using YouTube)
+npm run get-yt-token
 
-### 4. Running the Bot
-```bash
-# Start in development mode
+# 5. Run in Development
 npm run dev
 
-# Build and run in production
+# 6. Build and Start Production
 npm run build
 npm start
 ```
-Go to `http://localhost:3000` to inspect the visual dashboard.
 
 ---
 
-## ☁️ Deploying to Render Free Web Service
+## 🩸 Render Deployment (100% Uptime Free Hosting)
 
-1. Create a **Web Service** on [Render](https://dashboard.render.com/).
-2. Link your GitHub repository.
-3. Configure the following:
-   - **Runtime:** `Node`
-   - **Build Command:** `npm install && npm run build`
-   - **Start Command:** `npm start`
-   - **Instance Type:** `Free`
-4. Add all environment variables from `.env` in the **Environment** tab.
-5. **CRITICAL:** Set `RENDER_EXTERNAL_URL` to your Render app URL (e.g. `https://makima-bot.onrender.com`). This activates the auto-ping keep-alive script.
-
----
-
-## 📜 License
-Licensed under the [MIT License](LICENSE).
+1. Create a **Web Service** on [Render](https://dashboard.render.com/) linked to your repository.
+2. Build Settings:
+   *   **Runtime:** `Node`
+   *   **Build Command:** `npm install && npm run build`
+   *   **Start Command:** `npm start`
+   *   **Instance Type:** `Free`
+3. Add your environment variables in the **Environment** tab. Make sure `RENDER_EXTERNAL_URL` points to your public Render service domain.
+4. The server automatically triggers the ping utility every 10 minutes, keeping the container active 24/7!
