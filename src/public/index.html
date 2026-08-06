@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Makima Chatbot Status Control Panel</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #0d0e12;
+      --bg-card: rgba(22, 24, 30, 0.7);
+      --accent-crimson: #c92a2a;
+      --accent-crimson-glow: rgba(201, 42, 42, 0.4);
+      --text-main: #e9ecef;
+      --text-muted: #868e96;
+      --status-online: #2b8a3e;
+      --status-offline: #e03131;
+      --status-warning: #f08c00;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(201, 42, 42, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, rgba(201, 42, 42, 0.05) 0%, transparent 50%);
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 50px;
+      animation: fadeIn 1.2s ease-out;
+    }
+
+    header h1 {
+      font-family: 'Cinzel', serif;
+      font-size: 2.8rem;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #fff;
+      text-shadow: 0 0 20px var(--accent-crimson-glow);
+      margin-bottom: 12px;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      font-style: italic;
+      letter-spacing: 1px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1000px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 25px;
+      animation: slideUp 1s ease-out;
+    }
+
+    .card {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 30px;
+      transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: var(--accent-crimson);
+      opacity: 0.3;
+      transition: opacity 0.4s;
+    }
+
+    .card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(201, 42, 42, 0.15);
+      border-color: rgba(201, 42, 42, 0.3);
+    }
+
+    .card:hover::before {
+      opacity: 1;
+    }
+
+    .card-title {
+      font-family: 'Cinzel', serif;
+      font-size: 1.4rem;
+      letter-spacing: 2px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .status-indicator {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      box-shadow: 0 0 8px currentColor;
+    }
+
+    .status-text {
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .online { color: var(--status-online); }
+    .offline { color: var(--status-offline); }
+    .warning { color: var(--status-warning); }
+
+    .stat-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .stat-item {
+      display: flex;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      padding-bottom: 8px;
+      font-size: 0.95rem;
+    }
+
+    .stat-label {
+      color: var(--text-muted);
+    }
+
+    .stat-value {
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .log-panel {
+      grid-column: 1 / -1;
+      background: var(--bg-card);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 25px;
+    }
+
+    .log-title {
+      font-family: 'Cinzel', serif;
+      font-size: 1.2rem;
+      letter-spacing: 2px;
+      margin-bottom: 15px;
+      color: #fff;
+    }
+
+    .log-content {
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 8px;
+      padding: 15px;
+      font-family: monospace;
+      font-size: 0.85rem;
+      color: #a5d8ff;
+      height: 150px;
+      overflow-y: auto;
+      border: 1px solid rgba(255, 255, 255, 0.02);
+    }
+
+    .log-line {
+      margin-bottom: 6px;
+      white-space: pre-wrap;
+    }
+
+    footer {
+      margin-top: auto;
+      padding-top: 40px;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      letter-spacing: 1px;
+      text-align: center;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(30px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Makima</h1>
+    <p>"If you are obedient, I will take good care of you."</p>
+  </header>
+
+  <div class="container">
+    <!-- Twitch Panel -->
+    <div class="card">
+      <div class="card-title">
+        <span>Twitch</span>
+        <span id="twitch-status" class="status-indicator offline"></span>
+      </div>
+      <ul class="stat-list">
+        <li class="stat-item">
+          <span class="stat-label">Channel</span>
+          <span id="twitch-channel" class="stat-value">-</span>
+        </li>
+        <li class="stat-item">
+          <span class="stat-label">Mode</span>
+          <span id="twitch-mode" class="stat-value">-</span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- YouTube Panel -->
+    <div class="card">
+      <div class="card-title">
+        <span>YouTube</span>
+        <span id="youtube-status" class="status-indicator offline"></span>
+      </div>
+      <ul class="stat-list">
+        <li class="stat-item">
+          <span class="stat-label">Channel ID</span>
+          <span id="youtube-channel" class="stat-value" style="font-size: 0.75rem;">-</span>
+        </li>
+        <li class="stat-item">
+          <span class="stat-label">Mode</span>
+          <span id="youtube-mode" class="stat-value">-</span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Kick Panel -->
+    <div class="card">
+      <div class="card-title">
+        <span>Kick</span>
+        <span id="kick-status" class="status-indicator offline"></span>
+      </div>
+      <ul class="stat-list">
+        <li class="stat-item">
+          <span class="stat-label">Channel</span>
+          <span id="kick-channel" class="stat-value">-</span>
+        </li>
+        <li class="stat-item">
+          <span class="stat-label">Mode</span>
+          <span id="kick-mode" class="stat-value">-</span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- AI & System Panel -->
+    <div class="card">
+      <div class="card-title">
+        <span>AI Engine (Groq)</span>
+        <span id="ai-status" class="status-indicator online"></span>
+      </div>
+      <ul class="stat-list">
+        <li class="stat-item">
+          <span class="stat-label">Primary Model</span>
+          <span id="ai-primary" class="stat-value" style="font-size: 0.8rem;">-</span>
+        </li>
+        <li class="stat-item">
+          <span class="stat-label">Fallback Model</span>
+          <span id="ai-fallback" class="stat-value" style="font-size: 0.8rem;">-</span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- System Console Logs -->
+    <div class="log-panel">
+      <div class="log-title">Recent Activity Logs</div>
+      <div id="logs" class="log-content">
+        <div class="log-line">[System] Fetching bot status updates...</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Makima AI Stream Chatbot &copy; 2026. Hosted on Render Free tier.
+  </footer>
+
+  <script>
+    async function updateStatus() {
+      try {
+        const response = await fetch('/api/status');
+        const data = await response.json();
+
+        // Update Twitch
+        const twitchStatus = document.getElementById('twitch-status');
+        twitchStatus.className = `status-indicator ${data.twitch.status}`;
+        document.getElementById('twitch-channel').innerText = data.twitch.channel || 'Not configured';
+        document.getElementById('twitch-mode').innerText = data.twitch.mode;
+
+        // Update YouTube
+        const ytStatus = document.getElementById('youtube-status');
+        ytStatus.className = `status-indicator ${data.youtube.status}`;
+        document.getElementById('youtube-channel').innerText = data.youtube.channelId || 'Not configured';
+        document.getElementById('youtube-mode').innerText = data.youtube.mode;
+
+        // Update Kick
+        const kickStatus = document.getElementById('kick-status');
+        kickStatus.className = `status-indicator ${data.kick.status}`;
+        document.getElementById('kick-channel').innerText = data.kick.channelName || 'Not configured';
+        document.getElementById('kick-mode').innerText = data.kick.mode;
+
+        // Update AI
+        document.getElementById('ai-primary').innerText = data.ai.primary;
+        document.getElementById('ai-fallback').innerText = data.ai.fallback;
+
+        // Update Logs
+        const logsDiv = document.getElementById('logs');
+        logsDiv.innerHTML = '';
+        data.logs.forEach(log => {
+          const div = document.createElement('div');
+          div.className = 'log-line';
+          div.innerText = log;
+          logsDiv.appendChild(div);
+        });
+      } catch (err) {
+        console.error("Error fetching status from API:", err);
+      }
+    }
+
+    // Update status every 5 seconds
+    setInterval(updateStatus, 5000);
+    // Call immediately
+    updateStatus();
+  </script>
+</body>
+</html>

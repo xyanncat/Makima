@@ -1,0 +1,31 @@
+{
+  "name": "makima-chatbot",
+  "version": "1.0.0",
+  "description": "Multi-platform AI Live Stream Chatbot using Groq",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "get-yt-token": "ts-node src/utils/getYoutubeToken.ts"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "googleapis": "^140.0.0",
+    "openai": "^4.52.7",
+    "tmi.js": "^1.8.5",
+    "ws": "^8.18.0",
+    "youtube-chat": "^2.2.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.14.9",
+    "@types/tmi.js": "^1.8.6",
+    "@types/ws": "^8.5.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.2"
+  }
+}
