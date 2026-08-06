@@ -222,24 +222,6 @@
   </header>
 
   <div class="container">
-    <!-- Twitch Panel -->
-    <div class="card">
-      <div class="card-title">
-        <span>Twitch</span>
-        <span id="twitch-status" class="status-indicator offline"></span>
-      </div>
-      <ul class="stat-list">
-        <li class="stat-item">
-          <span class="stat-label">Channel</span>
-          <span id="twitch-channel" class="stat-value">-</span>
-        </li>
-        <li class="stat-item">
-          <span class="stat-label">Mode</span>
-          <span id="twitch-mode" class="stat-value">-</span>
-        </li>
-      </ul>
-    </div>
-
     <!-- YouTube Panel -->
     <div class="card">
       <div class="card-title">
@@ -254,24 +236,6 @@
         <li class="stat-item">
           <span class="stat-label">Mode</span>
           <span id="youtube-mode" class="stat-value">-</span>
-        </li>
-      </ul>
-    </div>
-
-    <!-- Kick Panel -->
-    <div class="card">
-      <div class="card-title">
-        <span>Kick</span>
-        <span id="kick-status" class="status-indicator offline"></span>
-      </div>
-      <ul class="stat-list">
-        <li class="stat-item">
-          <span class="stat-label">Channel</span>
-          <span id="kick-channel" class="stat-value">-</span>
-        </li>
-        <li class="stat-item">
-          <span class="stat-label">Mode</span>
-          <span id="kick-mode" class="stat-value">-</span>
         </li>
       </ul>
     </div>
@@ -313,23 +277,11 @@
         const response = await fetch('/api/status');
         const data = await response.json();
 
-        // Update Twitch
-        const twitchStatus = document.getElementById('twitch-status');
-        twitchStatus.className = `status-indicator ${data.twitch.status}`;
-        document.getElementById('twitch-channel').innerText = data.twitch.channel || 'Not configured';
-        document.getElementById('twitch-mode').innerText = data.twitch.mode;
-
         // Update YouTube
         const ytStatus = document.getElementById('youtube-status');
         ytStatus.className = `status-indicator ${data.youtube.status}`;
         document.getElementById('youtube-channel').innerText = data.youtube.channelId || 'Not configured';
         document.getElementById('youtube-mode').innerText = data.youtube.mode;
-
-        // Update Kick
-        const kickStatus = document.getElementById('kick-status');
-        kickStatus.className = `status-indicator ${data.kick.status}`;
-        document.getElementById('kick-channel').innerText = data.kick.channelName || 'Not configured';
-        document.getElementById('kick-mode').innerText = data.kick.mode;
 
         // Update AI
         document.getElementById('ai-primary').innerText = data.ai.primary;

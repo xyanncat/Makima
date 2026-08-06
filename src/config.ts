@@ -32,12 +32,6 @@ export const config = {
     password: env("DASHBOARD_PASSWORD"),
   },
 
-  twitch: {
-    username: env("TWITCH_BOT_USERNAME"),
-    oauthToken: env("TWITCH_OAUTH_TOKEN"),
-    channel: env("TWITCH_CHANNEL"),
-  },
-
   youtube: {
     videoId: env("YOUTUBE_VIDEO_ID"),
     channelId: env("YOUTUBE_CHANNEL_ID"),
@@ -47,19 +41,9 @@ export const config = {
     refreshToken: env("YOUTUBE_REFRESH_TOKEN"),
   },
 
-  kick: {
-    chatroomId: env("KICK_CHATROOM_ID"),
-    bearerToken: env("KICK_BOT_TOKEN"),
-    channelName: env("KICK_CHANNEL_NAME"),
-    clientId: env("KICK_CLIENT_ID"),
-    clientSecret: env("KICK_CLIENT_SECRET"),
-  },
-
-  // Outbound queue throttle (ms between messages per platform) and buffer caps.
+  // Outbound queue throttle (ms between messages) and buffer cap.
   throttle: {
-    twitchMs: Number(process.env.TWITCH_QUEUE_MS ?? "1500"),
     youtubeMs: Number(process.env.YOUTUBE_QUEUE_MS ?? "5000"),
-    kickMs: Number(process.env.KICK_QUEUE_MS ?? "2000"),
     maxBuffer: Number(process.env.QUEUE_MAX_BUFFER ?? "10"),
   },
 

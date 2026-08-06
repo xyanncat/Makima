@@ -1,5 +1,5 @@
 export interface ChatPlatformMessage {
-  platform: "twitch" | "youtube" | "kick";
+  platform: "youtube";
   author: string;
   text: string;
   /** The user prompt after the command prefix has been stripped. */

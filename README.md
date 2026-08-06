@@ -46,9 +46,7 @@
 
 | Platform | Chat Listener | Chat Sender | Authentication Required |
 | :--- | :--- | :--- | :--- |
-| <img src="https://img.shields.io/badge/Twitch-9146FF?style=flat-square&logo=twitch&logoColor=white" height="20"> | **TMI.js Client** | **TMI.js IRC Writer** | Channel Name & OAuth Token |
-| <img src="https://img.shields.io/badge/YouTube-FF0000?style=flat-square&logo=youtube&logoColor=white" height="20"> | **HTML Chat Scraper** | **Google API Client** | OAuth2 Client ID & Refresh Token |
-| <img src="https://img.shields.io/badge/Kick-53FC18?style=flat-square&logo=kick&logoColor=black" height="20"> | **Pusher WebSockets** | **Direct HTTPS Post** | Account Session Auth Token |
+| <img src="https://img.shields.io/badge/YouTube-FF0000?style=flat-square&logo=youtube&logoColor=white" height="20"> | **LiveChat Listener** (`youtube-chat`) | **Google API Client** | OAuth2 Client ID & Refresh Token |
 
 ---
 
@@ -69,21 +67,11 @@ To boot the bot, configure the following variables inside a local `.env` file or
 <summary><b>🔑 Click to view Platform Connection Config</b></summary>
 
 ```ini
-# Twitch settings
-TWITCH_CHANNEL=streamer_username
-TWITCH_BOT_USERNAME=bot_username
-TWITCH_OAUTH_TOKEN=oauth:xxxxxxxxxxxxxxxxxxxxx
-
 # YouTube settings
 YOUTUBE_CHANNEL_ID=UCxxxxxxx
 YOUTUBE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
 YOUTUBE_CLIENT_SECRET=gsecs_xxxxxxxxx
 YOUTUBE_REFRESH_TOKEN=1//0xxxxxxxxx
-
-# Kick settings
-KICK_CHANNEL_NAME=streamer_name
-KICK_CHATROOM_ID=1234567
-KICK_BOT_TOKEN=Bearer xxxxxxxxxxxxxxxxxx
 ```
 </details>
 

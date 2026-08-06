@@ -11,17 +11,13 @@ The bot runs as a single-process Node.js service on Render, structured as a unid
 ```mermaid
 graph TD
     %% Define Platform Inputs
-    Twitch[Twitch Live Chat]
     YouTube[YouTube Live Chat]
-    Kick[Kick Live Chat]
 
     %% Render Web Service boundary
     subgraph Render [Render Web Service - Single Process]
         %% Listeners
         subgraph Listeners [Chat Listeners]
-            TwitchListener[Twitch TMI Listener]
-            YTListener[YT Scrape Listener]
-            KickListener[Kick Pusher Listener]
+            YTListener[YT LiveChat Listener]
         end
 
         %% Message Router
@@ -177,14 +173,10 @@ We will restructure the project to import database clients and implement the mes
 ### [NEW] [src/services/queue.ts](file:///d:/Github/makima/src/services/queue.ts)
 - Outbound queue coordinator managing rate-limit delays per channel.
 
-### [MODIFY] [src/services/twitch.ts](file:///d:/Github/makima/src/services/twitch.ts)
-- Inject user rate-limiting checks and queue outbound responses.
-
 ### [MODIFY] [src/services/youtube.ts](file:///d:/Github/makima/src/services/youtube.ts)
 - Query database for refresh tokens, check auto-expiry before messaging, and route replies through the rate-limited queue.
 
-### [MODIFY] [src/services/kick.ts](file:///d:/Github/makima/src/services/kick.ts)
-- Inject websocket deduplication checks via Redis and route HTTP posts through the Kick queue.
+> **Note:** Twitch and Kick integrations were removed. The bot now targets YouTube exclusively.
 
 ### [MODIFY] [src/index.ts](file:///d:/Github/makima/src/index.ts)
 - Add Basic Auth middleware to dashboard routes.

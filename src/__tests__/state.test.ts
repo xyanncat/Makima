@@ -11,10 +11,10 @@ describe("StateStore (in-memory)", () => {
 
   it("isRateLimited allows the first message and blocks the second within the window", async () => {
     const store = await createStateStore({} as any);
-    expect(await store.isRateLimited("twitch", "alice", 10)).toBe(false);
-    expect(await store.isRateLimited("twitch", "alice", 10)).toBe(true);
+    expect(await store.isRateLimited("youtube", "alice", 10)).toBe(false);
+    expect(await store.isRateLimited("youtube", "alice", 10)).toBe(true);
     // Different user is unaffected.
-    expect(await store.isRateLimited("twitch", "bob", 10)).toBe(false);
+    expect(await store.isRateLimited("youtube", "bob", 10)).toBe(false);
   });
 
   it("stores and retrieves an OAuth token", async () => {

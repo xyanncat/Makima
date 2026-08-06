@@ -3,11 +3,8 @@ import { loadConfig } from "./config";
 import { createStateStore } from "./services/db";
 import { createQueues } from "./services/queue";
 import { startAutoPing } from "./services/ping";
-import { startTwitch } from "./services/twitch";
 import { startYouTube } from "./services/youtube";
-import { startKick } from "./services/kick";
 import { LogLine, LogSink, makeLog } from "./services/types";
-import { maskSecret } from "./services/security";
 import { BotContext } from "./services/context";
 
 const MAX_LOGS = 200;
@@ -63,9 +60,7 @@ async function main() {
 
   const ctx: BotContext = { config, store, queues, log };
 
-  log("system", "info", "Starting Makima Live Stream AI Chatbot (production build)...");
-  log("system", "info", `Twitch token: ${maskSecret(config.twitch.oauthToken)}`);
-  log("system", "info", `Kick token: ${maskSecret(config.kick.bearerToken)}`);
+  log("system", "info", "Starting Makima Live Stream AI Chatbot (YouTube-only production build)...");
 
   // Process-level watchdog: keep the daemon alive on unexpected errors.
   process.on("unhandledRejection", (reason) => {
@@ -91,20 +86,10 @@ async function main() {
   app.get("/api/status", auth, (_req, res) => {
     const statusOf = (configured: boolean) => (configured ? "online" : "offline");
     res.json({
-      twitch: {
-        status: statusOf(Boolean(config.twitch.channel)),
-        channel: config.twitch.channel ?? "Not configured",
-        mode: "Listener + Rate-Limited Queue",
-      },
       youtube: {
-        status: statusOf(Boolean(config.youtube.videoId || config.youtube.channelHandle)),
-        channelId: config.youtube.videoId ?? "Not configured",
-        mode: "Scrape Listener + API Sender",
-      },
-      kick: {
-        status: statusOf(Boolean(config.kick.chatroomId)),
-        channelName: config.kick.chatroomId ?? "Not configured",
-        mode: "Pusher Listener + Custom Sender",
+        status: statusOf(Boolean(config.youtube.videoId || config.youtube.channelId || config.youtube.channelHandle)),
+        channelId: config.youtube.videoId ?? config.youtube.channelId ?? "Not configured",
+        mode: "LiveChat Listener + API Sender",
       },
       ai: {
         primary: config.groq.primaryModel,
@@ -123,9 +108,7 @@ async function main() {
   });
 
   startAutoPing();
-  startTwitch(ctx);
   startYouTube(ctx);
-  startKick(ctx);
 }
 
 main();

@@ -47,16 +47,12 @@ export class OutboundQueue {
 }
 
 export function createQueues(
-  throttle: { twitchMs: number; youtubeMs: number; kickMs: number; maxBuffer: number },
+  throttle: { youtubeMs: number; maxBuffer: number },
   log: LogSink
 ): {
-  twitch: OutboundQueue;
   youtube: OutboundQueue;
-  kick: OutboundQueue;
 } {
   return {
-    twitch: new OutboundQueue("twitch", throttle.twitchMs, throttle.maxBuffer, log),
     youtube: new OutboundQueue("youtube", throttle.youtubeMs, throttle.maxBuffer, log),
-    kick: new OutboundQueue("kick", throttle.kickMs, throttle.maxBuffer, log),
   };
 }

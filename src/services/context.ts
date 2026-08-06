@@ -8,14 +8,12 @@ export interface BotContext {
   config: Config;
   store: StateStore;
   queues: {
-    twitch: OutboundQueue;
     youtube: OutboundQueue;
-    kick: OutboundQueue;
-  };
+  },
   log: LogSink;
 }
 
-export type Platform = "twitch" | "youtube" | "kick";
+export type Platform = "youtube";
 
 export type GuardResult =
   | { ok: true }
