@@ -1,0 +1,78 @@
+<svg width="600" height="150" viewBox="0 0 600 150" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .glow-text {
+      font-family: 'Cinzel', Georgia, serif;
+      fill: #ffffff;
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: 12px;
+      text-shadow: 0 0 10px #c92a2a, 0 0 20px #c92a2a, 0 0 30px #c92a2a;
+      animation: textFlicker 3s infinite alternate;
+    }
+    .subtitle-text {
+      font-family: 'Inter', sans-serif;
+      fill: #868e96;
+      font-size: 11px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+    .animated-chain {
+      stroke: #c92a2a;
+      stroke-width: 1.5;
+      stroke-dasharray: 200;
+      stroke-dashoffset: 400;
+      animation: drawChain 6s linear infinite;
+      opacity: 0.8;
+    }
+    .ring {
+      transform-origin: center;
+      animation: spinRing 20s linear infinite;
+    }
+    .ring-reverse {
+      transform-origin: center;
+      animation: spinRingRev 15s linear infinite;
+    }
+    @keyframes textFlicker {
+      0%, 100% { opacity: 0.95; text-shadow: 0 0 8px #c92a2a, 0 0 15px #c92a2a; }
+      50% { opacity: 1; text-shadow: 0 0 18px #c92a2a, 0 0 35px #c92a2a, 0 0 50px #c92a2a; }
+      92% { opacity: 0.9; }
+      93% { opacity: 0.5; }
+      94% { opacity: 0.9; }
+    }
+    @keyframes drawChain {
+      to { stroke-dashoffset: 0; }
+    }
+    @keyframes spinRing {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @keyframes spinRingRev {
+      from { transform: rotate(360deg); }
+      to { transform: rotate(0deg); }
+    }
+  </style>
+  <!-- Background Layer -->
+  <rect width="600" height="150" fill="#0d0e12" rx="10"/>
+  
+  <!-- Left Decorative Seals -->
+  <g transform="translate(60, 75)">
+    <circle class="ring" r="40" fill="none" stroke="rgba(201, 42, 42, 0.2)" stroke-width="1.5" stroke-dasharray="10 5"/>
+    <circle class="ring-reverse" r="30" fill="none" stroke="rgba(255, 255, 255, 0.05)" stroke-width="1" stroke-dasharray="4 2"/>
+    <path d="M-20 0 L20 0 M0 -20 L0 20" stroke="rgba(201, 42, 42, 0.3)" stroke-width="1"/>
+  </g>
+
+  <!-- Right Decorative Seals -->
+  <g transform="translate(540, 75)">
+    <circle class="ring-reverse" r="40" fill="none" stroke="rgba(201, 42, 42, 0.2)" stroke-width="1.5" stroke-dasharray="10 5"/>
+    <circle class="ring" r="30" fill="none" stroke="rgba(255, 255, 255, 0.05)" stroke-width="1" stroke-dasharray="4 2"/>
+    <path d="M-20 0 L20 0 M0 -20 L0 20" stroke="rgba(201, 42, 42, 0.3)" stroke-width="1"/>
+  </g>
+
+  <!-- Connecting Animated Chain Lines -->
+  <path class="animated-chain" d="M110 55 L490 55" fill="none"/>
+  <path class="animated-chain" d="M490 95 L110 95" fill="none" style="animation-delay: -3s;"/>
+
+  <!-- Central Text -->
+  <text x="300" y="70" class="glow-text" text-anchor="middle">MAKIMA BOT</text>
+  <text x="300" y="105" class="subtitle-text" text-anchor="middle">CONTROL ENGINE v1.0.0 // GROQ AI</text>
+</svg>
