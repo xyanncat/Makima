@@ -1,148 +1,205 @@
-# Implementation Plan - Makima Live Stream AI Chatbot
+# Production-Grade Implementation Plan - Makima AI Chatbot
 
-This plan details the architecture, features, and step-by-step implementation for building a multi-platform AI live stream chatbot connected to **Twitch**, **YouTube**, and **Kick** live streams.
-
-The chatbot features the personality of **Makima** from *Chainsaw Man*, processes commands starting with `!makima`, uses Groq/OpenRouter for AI generation with model fallback, and is hosted on a free Render Web Service with self-ping capability to keep it active.
+This document details the architectural blueprint and step-by-step implementation path for upgrading the **Makima AI Chatbot** into a highly resilient, production-grade, state-persisted service.
 
 ---
 
-## User Review Required
+## 1. Core Architecture
 
-> [!IMPORTANT]
-> **API Keys & Credentials:**
-> To connect and post to Twitch, YouTube, and Kick, the bot requires specific credentials for each platform. For production, these will be stored securely in the **Render Environment Variables**.
-> - **Twitch:** Requires a Twitch account OAuth token (`oauth:xxxxxx`).
-> - **YouTube:** Reading chat can be done via scraping without keys, but **writing** to YouTube chat requires a Google Cloud project with OAuth2 credentials (refresh token).
-> - **Kick:** Reading is done via public Pusher WebSockets (no key needed). **Writing** to Kick requires an official Kick developer account API credentials (`Client ID`/`Secret`) or account-level tokens.
-> - **Groq:** Requires a Groq API key (`GROQ_API_KEY`).
+The bot runs as a single-process Node.js service on Render, structured as a unidirectional pipeline with decoupled layers and an external database to persist state across container restarts.
+
+```mermaid
+graph TD
+    %% Define Platform Inputs
+    Twitch[Twitch Live Chat]
+    YouTube[YouTube Live Chat]
+    Kick[Kick Live Chat]
+
+    %% Render Web Service boundary
+    subgraph Render [Render Web Service - Single Process]
+        %% Listeners
+        subgraph Listeners [Chat Listeners]
+            TwitchListener[Twitch TMI Listener]
+            YTListener[YT Scrape Listener]
+            KickListener[Kick Pusher Listener]
+        end
+
+        %% Message Router
+        Router[Message Router / Command Parser]
+
+        %% State checking
+        Deduplicator[Message Deduplicator]
+        RateLimiter[User Rate Limiter]
+
+        %% AI Engine
+        AIEngine[AI Response Engine<br/>Groq Primary / Fallback]
+
+        %% Outbound Queues
+        subgraph Queues [Outbound Message Queues]
+            TwitchQueue[Twitch Queue]
+            YTQueue[YouTube Queue]
+            KickQueue[Kick Queue]
+        end
+
+        %% Senders
+        TwitchSender[Twitch Sender]
+        YTSender[YouTube API Sender]
+        KickSender[Kick Custom Sender]
+    end
+
+    %% External System Connections
+    UptimeRobot[Uptime Monitor / External Cron]
+    Upstash[Upstash Redis <br/> Deduplication / Rate Limits]
+    Supabase[Supabase Postgres / MongoDB <br/> OAuth Tokens / Command Logs]
+
+    %% Flow connections
+    Twitch --> TwitchListener
+    YouTube --> YTListener
+    Kick --> KickListener
+
+    Listeners --> Router
+    Router --> Deduplicator
+    Deduplicator --> RateLimiter
+    
+    %% DB State checks
+    RateLimiter <--> Upstash
+    Deduplicator <--> Upstash
+    
+    RateLimiter --> AIEngine
+    AIEngine --> Queues
+    
+    %% Queue flow
+    TwitchQueue --> TwitchSender
+    YTQueue --> YTSender
+    KickQueue --> KickSender
+    
+    %% Sender to Chat output
+    TwitchSender --> Twitch
+    YTSender --> YouTube
+    KickSender --> Kick
+
+    %% Tokens update
+    YTSender <--> Supabase
+    KickSender <--> Supabase
+
+    %% Keep-Alive
+    UptimeRobot -.->|Health checks /health| Render
+```
+
+- **Data Flow:** Live stream events are captured by individual **Listeners**, routed to the **Router** to extract parameters and sanitize instructions, checked against **Upstash Redis** for deduplication and rate-limiting, processed by the **AI Engine** using Groq, and appended to platform-specific **Outbound Queues** for throttled transmission.
+- **External State:** Ephemeral container restarts are mitigated by shifting all token configurations, deduplication indexes, and command history to external persistent databases.
 
 ---
 
-## User Decisions & Architecture Paths
+## 2. Free Tier Sleep & Keep-Alive Strategy
 
-- **Kick Chat Messages (Option C):** We will build a custom HTTP client that sends messages to Kick using the bot account's authentication token (`Authorization: Bearer <token>` or session cookies) to bypass developer account restriction.
-- **YouTube OAuth Setup:** Since you don't have OAuth credentials set up yet, we will:
-  1. Add a step-by-step guide on how to create a Google Cloud Project, enable the YouTube Data API v3, and get a Client ID/Secret.
-  2. Include a CLI utility script `npm run get-yt-token` in the project to automatically spin up a temporary server, guide you through the login flow, and print out the required `YOUTUBE_REFRESH_TOKEN` for your `.env` file.
+Render's free tier spins down containers after 15 minutes of HTTP inactivity. Cold starts disconnect live chat listeners, leading to missed messages.
+
+- **External Cron Ping:** We configure a free external monitor (e.g. **UptimeRobot** or **cron-job.org**) to hit the `/health` endpoint of the Render service every **5 to 8 minutes** to prevent sleep.
+- **State Reconnection on Restart:** The application is designed defensively so that container spin-up (or forced redeploy) automatically queries the DB for tokens, logs in, and re-subscribes all listeners from scratch as the primary startup path.
+
+---
+
+## 3. Persistent State Layer
+
+To bypass Render's ephemeral disk limitation, we utilize two free-tier external databases:
+
+### A. Redis (Upstash Free Tier)
+- **Use Case:** High-throughput, short-lived states.
+- **Keys Stored:**
+  - `dedup:<message_id>`: Set with a TTL of 5 minutes to prevent processing the same chat message twice during connection reconnect loops.
+  - `ratelimit:<platform>:<user_id>`: Stored as a simple counter with a 10-second TTL to enforce cooldowns.
+
+### B. Relational / Document DB (Supabase Postgres or MongoDB Atlas Free Tier)
+- **Use Case:** Long-lived, transaction-safe configurations.
+- **Tables / Collections:**
+  - `oauth_tokens`: Stores `platform`, `client_id`, `client_secret`, `access_token`, `refresh_token`, and `expires_at` timestamps.
+  - `command_logs`: Audits processed queries, response times, model types used, and error reports.
+
+---
+
+## 4. Account & Authentication Strategy
+
+To safeguard personal assets, a **"Bot Account"** structure is enforced:
+
+- **Dedicated Accounts:** Separate Twitch, Google, and Kick accounts must be registered specifically for the bot.
+- **OAuth Scope Minimization:** Requests are limited strictly to write-only permissions where available (e.g., `youtube.force-ssl` for YouTube chat).
+- **Auto-Refresh Loop:** Before any API request is sent, the code checks the `expires_at` timestamp. If it is within 5 minutes of expiring, the bot performs a token refresh request, updates the database, and resumes the output queue.
+- **401 Authorization Failures:** If a refresh token becomes invalid (causing a 401 response), the bot halts output for that platform, raises a critical system warning log, and alerts the web dashboard.
+
+---
+
+## 5. Security Hardening
+
+- **Zero-Secret Codebase:** No credentials reside in the repository. All DB connection URIs and initial variables are pulled exclusively from Render Environment settings.
+- **Prompt Injection Defense:** Incoming messages are sanitized. Any messages containing malicious escape patterns (e.g., `ignore previous instructions`, `you are now a helpful assistant`, or prompt overrides) are flagged, logged, and met with a silent fail or a cold Makima quote rejection.
+- **User Cooldowns:** Rate limits are enforced on a per-user basis (1 message per 10 seconds) to prevent cost inflation.
+- **Dashboard Basic Auth:** Access to the visual dashboard (`/`) and status telemetry (`/api/status`) is locked behind basic authorization (`admin` + a user-configured password in Render settings).
+- **Token Masking:** Console logs, telemetry pages, and API outputs sanitize all tokens (`oauth:***`, `gsk_***`).
+
+---
+
+## 6. Fault-Tolerance & Reliability
+
+- **Exponential Backoff Reconnects:** If a listener disconnects, it retries starting at 2 seconds, doubling the duration up to a maximum of 5 minutes, preventing API ban list triggers.
+- **Circuit Breakers:** If the YouTube or Kick API returns consecutive 5xx server errors, the corresponding sender is temporarily disabled, and the queue drops backlog requests until the service recovers.
+- **AI Engine Fault Tolerance:**
+  - Primary tries `llama-3.1-70b-versatile`.
+  - Fallback tries `llama-3.1-8b-instant`.
+  - If both fail, the bot logs the error and silent-fails (skipping response) to protect process integrity.
+- **Boundary Try/Catches:** Each platform listener and sender runs in an isolated scope. A failure on Kick will never affect Twitch or YouTube operations.
+- **Process Watchdog:** Captures `unhandledRejection` and `uncaughtException` events, logs them, and keeps the daemon active rather than crashing the container.
+
+---
+
+## 7. Outbound Message Queues
+
+To comply with platform anti-spam rules and quotas, we implement dedicated queues:
+
+- **Twitch Queue:** Limit to 1 message every 1.5 seconds (under the 20 messages per 30 seconds limit for non-moderators).
+- **YouTube Queue:** Since inserts consume 200 quota units, message writes are throttled to 1 message every 5 seconds.
+- **Kick Queue:** Throttled to 1 message every 2 seconds.
+- **Queue Buffering:** Excess incoming requests are placed in an in-memory array. If the queue length exceeds 10 messages, older requests are discarded to prevent sending stale responses.
 
 ---
 
 ## Proposed Changes
 
-We will build the application in a new Node.js project using **TypeScript** for safety and modern development practices.
+We will restructure the project to import database clients and implement the message queues.
 
-```
-makima/
-├── src/
-│   ├── index.ts               # Application entry point
-│   ├── config.ts              # Env config and validation
-│   ├── services/
-│   │   ├── ai.ts              # AI Engine using Groq API + Fallback
-│   │   ├── ping.ts            # Render auto-ping task
-│   │   ├── twitch.ts          # Twitch Chat listener and sender
-│   │   ├── youtube.ts         # YouTube Chat listener and sender
-│   │   └── kick.ts            # Kick Chat listener and sender
-│   └── public/
-│       └── index.html         # Status Dashboard page
-├── .env.example
-├── package.json
-└── tsconfig.json
-```
+### [MODIFY] [config.ts](file:///d:/Github/makima/src/config.ts)
+- Add database connection settings (Redis URL, Postgres URL).
+- Add Basic Auth credentials for dashboard locking.
 
----
+### [NEW] [src/services/db.ts](file:///d:/Github/makima/src/services/db.ts)
+- Implement clients for Upstash Redis (key/value, TTLs) and PostgreSQL (for token storage).
 
-### Component Details
+### [NEW] [src/services/queue.ts](file:///d:/Github/makima/src/services/queue.ts)
+- Outbound queue coordinator managing rate-limit delays per channel.
 
-#### 1. Core Server & Auto-Ping (`src/index.ts` & `src/services/ping.ts`)
-- Starts an Express server serving a simple, clean status page.
-- Exposes `/ping` and `/health` endpoints.
-- Auto-ping logic: Pings the external URL (e.g. `https://your-service.onrender.com/ping`) every 10 minutes to prevent Render's free tier from sleeping.
+### [MODIFY] [src/services/twitch.ts](file:///d:/Github/makima/src/services/twitch.ts)
+- Inject user rate-limiting checks and queue outbound responses.
 
-#### 2. AI Service (`src/services/ai.ts`)
-- Configured exclusively to use the Groq API endpoint (`https://api.groq.com/openai/v1`) using standard OpenAI client.
-- Implements fallback logic between the configured primary and secondary Groq models.
-- Since model availability on Groq can vary, the model names are fully configurable via env variables (`GROQ_PRIMARY_MODEL` and `GROQ_FALLBACK_MODEL`), defaulting to:
-  - Primary: `llama-3.1-70b-versatile` (or the user-specified custom model if compatible/routed)
-  - Fallback: `llama-3.1-8b-instant` (or user's secondary fallback)
-- Uses a **Makima System Prompt**:
-  ```
-  You are Makima from Chainsaw Man. You are polite, refined, calm, and dominant.
-  You speak with absolute confidence and quiet authority. You never use emojis, exclamation marks, or excessive slang.
-  Your responses must be short (1-2 sentences), accurate, and delivered with a polite but menacing undertone.
-  Treat others with mild curiosity or as assets/dogs under your control when appropriate, but maintain high professionalism.
-  ```
+### [MODIFY] [src/services/youtube.ts](file:///d:/Github/makima/src/services/youtube.ts)
+- Query database for refresh tokens, check auto-expiry before messaging, and route replies through the rate-limited queue.
 
-#### 3. Twitch Client (`src/services/twitch.ts`)
-- Uses `tmi.js` to connect to Twitch IRC.
-- Listens to the target channel. On message starting with `!makima`, queries the AI and replies to the chat.
+### [MODIFY] [src/services/kick.ts](file:///d:/Github/makima/src/services/kick.ts)
+- Inject websocket deduplication checks via Redis and route HTTP posts through the Kick queue.
 
-#### 4. YouTube Client (`src/services/youtube.ts`)
-- Uses a scraping library like `masterchat` or `youtubei.js` to poll the live chat stream without exhausting Google API quota limits.
-- On detecting `!makima`, queries the AI.
-- If OAuth refresh tokens are configured, sends the reply using the official YouTube Data API (`liveChatMessages.insert`).
-
-#### 5. Kick Client (`src/services/kick.ts`)
-- Connects directly to Kick's Pusher WebSocket server (`wss://ws-us2.pusher.com`).
-- Listens to `chatrooms.{chatroom_id}.v2` for new message events.
-- On detecting `!makima`, queries the AI.
-- If Kick API credentials are configured, sends a message back to the chat.
+### [MODIFY] [src/index.ts](file:///d:/Github/makima/src/index.ts)
+- Add Basic Auth middleware to dashboard routes.
+- Add process-level watchdog logs.
 
 ---
 
 ## Verification Plan
 
 ### Automated Tests
-- Build verification: `npm run build`
-- Unit tests: Verify AI response formats and fallback error handling.
+- Test rate-limit counters in isolation.
+- Test message deduplication keys in Redis.
+- Verify tokens refresh flow using mock API endpoints.
 
 ### Manual Verification
-- Deploy to a local instance to test all connections.
-- Print live stream chat messages to console logs to confirm listener status.
-- Trigger `!makima` in respective chats to verify replies.
-- Check Render logs to verify self-ping execution.
-
----
-
-## YouTube OAuth Step-by-Step Setup Guide
-
-Follow these steps to set up the credentials needed for the YouTube bot:
-
-### 1. Create a Google Cloud Project
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2. Click on the project dropdown at the top, then click **New Project**.
-3. Name it `Makima Chatbot` and click **Create**.
-
-### 2. Enable the YouTube Data API v3
-1. Select your new project in the top dropdown.
-2. In the left sidebar, navigate to **APIs & Services** > **Library**.
-3. Search for `YouTube Data API v3`, click on it, and click **Enable**.
-
-### 3. Configure the OAuth Consent Screen
-1. Go to **APIs & Services** > **OAuth consent screen**.
-2. Select **External** and click **Create**.
-3. Fill in the required fields:
-   - **App name:** `Makima Chatbot`
-   - **User support email:** Your email address
-   - **Developer contact information:** Your email address
-4. Click **Save and Continue**.
-5. **Scopes:** Click **Add or Remove Scopes**, search for `youtube` in the search bar, select `https://www.googleapis.com/auth/youtube.force-ssl` (write access to live chat), and click **Update**. Click **Save and Continue**.
-6. **Test Users:** Under the Test Users section, click **Add Users** and input the Gmail address of the YouTube channel that will be running the live stream. Click **Save and Continue**.
-
-### 4. Create OAuth 2.0 Credentials
-1. Go to **APIs & Services** > **Credentials**.
-2. Click **Create Credentials** at the top and select **OAuth client ID**.
-3. Set **Application type** to **Web application**.
-4. In **Authorized redirect URIs**, click **Add URI** and enter:
-   `http://localhost:3000/oauth2callback`
-5. Click **Create**.
-6. Copy the **Client ID** and **Client Secret** into your project's `.env` file under `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET`.
-
-### 5. Generate the Refresh Token
-1. Run the local setup utility in this workspace:
-   `npm run get-yt-token`
-2. Follow the prompt to open the login link in your browser.
-3. Sign in with the YouTube channel's Google Account.
-4. Click **Continue** (if Google warns that the app is unverified).
-5. Approve the permissions.
-6. The CLI will print your `YOUTUBE_REFRESH_TOKEN`. Copy it and add it to your `.env` file!
-
+- Simulate a high-frequency trigger burst in Twitch chat to confirm that the Twitch queue handles delays and discards overflow.
+- Perform a manual restart of the Express server to confirm that listeners fetch tokens from the database and reconnect automatically.
+- Verify basic authentication popup blocks dashboard access when loading `http://localhost:3000`.
