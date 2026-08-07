@@ -62,7 +62,7 @@ To boot the bot, configure the following variables inside a local `.env` file or
 *   `GROQ_API_KEY`: Your Groq Cloud access key.
 *   `GROQ_PRIMARY_MODEL`: Defaults to `llama-3.1-70b-versatile`.
 *   `GROQ_FALLBACK_MODEL`: Defaults to `llama-3.1-8b-instant`.
-*   `COMMAND_PREFIX`: The only command prefix is `!`; other values are ignored.
+*   `COMMAND_PREFIX`: The AI command prefix is fixed to `!makima`; other values are ignored.
 *   `CUSTOM_COMMAND_INSTA`: Response sent by `!insta`.
 *   `CUSTOM_COMMAND_DC`: Response sent by `!dc`.
 *   `CUSTOM_COMMAND_SPECS`: Response sent by `!specs`.

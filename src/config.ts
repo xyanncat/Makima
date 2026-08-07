@@ -21,7 +21,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     return value;
   };
 
-  const commandPrefix = "!";
+  const commandPrefix = "!makima";
 
   const loaded = {
   port: number("PORT", 3000, 1),

@@ -1,26 +1,21 @@
 import { MAKIMA_SYSTEM_PROMPT, COMMAND_PREFIX, loadConfig } from "../config";
 
 describe("command parsing", () => {
-  it("detects the command prefix case-insensitively", () => {
-    expect("!hello".toLowerCase().startsWith(COMMAND_PREFIX)).toBe(true);
-    expect("!HELLO".toLowerCase().startsWith(COMMAND_PREFIX)).toBe(true);
-    expect("hello makima".toLowerCase().startsWith(COMMAND_PREFIX)).toBe(false);
-  });
-
-  it("only treats a single leading exclamation mark as a command", () => {
-    expect("!hello".startsWith(COMMAND_PREFIX)).toBe(true);
-    expect("hello !hello".startsWith(COMMAND_PREFIX)).toBe(false);
-    expect("!!hello".startsWith(`${COMMAND_PREFIX}${COMMAND_PREFIX}`)).toBe(true);
+  it("uses !makima as the only AI prefix", () => {
+    expect("!makima hello".startsWith(COMMAND_PREFIX)).toBe(true);
+    expect("!hello".startsWith(COMMAND_PREFIX)).toBe(false);
+    expect("hello !makima".startsWith(COMMAND_PREFIX)).toBe(false);
+    expect("!!makima hello".startsWith(COMMAND_PREFIX)).toBe(false);
   });
 
   it("extracts the prompt after the prefix", () => {
-    const msg = "!tell me about control";
+    const msg = "!makima tell me about control";
     const prompt = msg.slice(COMMAND_PREFIX.length).trim();
     expect(prompt).toBe("tell me about control");
   });
 
   it("ignores empty prompts", () => {
-    const msg = "!   ";
+    const msg = "!makima   ";
     const prompt = msg.slice(COMMAND_PREFIX.length).trim();
     expect(prompt.length).toBe(0);
   });
@@ -43,7 +38,7 @@ describe("configuration", () => {
       CUSTOM_COMMAND_SPECS: "CPU: test",
       YOUTUBE_RATE_LIMIT_WINDOW_SEC: "15",
     });
-    expect(configured.commandPrefix).toBe("!");
+    expect(configured.commandPrefix).toBe("!makima");
     expect(configured.customCommands).toEqual({
       insta: "https://instagram.com/test",
       dc: "https://discord.gg/test",

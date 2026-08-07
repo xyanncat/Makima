@@ -286,13 +286,10 @@ export function startYouTube(ctx: BotContext): () => void {
     const author: string = chat.author?.name ?? "unknown";
     const authorId: string = chat.author?.channelId ?? author;
     const trimmed = text.trim();
-    if (!trimmed.startsWith(config.commandPrefix)
-      || trimmed.startsWith(`${config.commandPrefix}${config.commandPrefix}`)) return;
-
-    const prompt = trimmed.slice(config.commandPrefix.length).trim();
-    if (prompt.length === 0) return;
-
-    const customCommandKey = prompt.toLowerCase();
+    const trimmedLower = trimmed.toLowerCase();
+    const customCommandKey = trimmedLower.startsWith("!")
+      ? trimmedLower.slice(1).trim()
+      : "";
     const isCustomCommand = Object.prototype.hasOwnProperty.call(
       config.customCommands,
       customCommandKey
@@ -300,9 +297,18 @@ export function startYouTube(ctx: BotContext): () => void {
     const customResponse = config.customCommands[
       customCommandKey as keyof typeof config.customCommands
     ];
-    if (isCustomCommand && !customResponse) {
-      log("youtube", "warn", `Custom command !${customCommandKey} has no configured response.`);
-      return;
+    let prompt: string;
+
+    if (isCustomCommand) {
+      prompt = customCommandKey;
+      if (!customResponse) {
+        log("youtube", "warn", `Custom command !${customCommandKey} has no configured response.`);
+        return;
+      }
+    } else {
+      if (!trimmedLower.startsWith(config.commandPrefix)) return;
+      prompt = trimmed.slice(config.commandPrefix.length).trim();
+      if (prompt.length === 0) return;
     }
 
     const timestamp = chat.timestamp instanceof Date
