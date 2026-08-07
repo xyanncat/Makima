@@ -78,7 +78,7 @@ YOUTUBE_REFRESH_TOKEN=1//0xxxxxxxxx
 ```
 </details>
 
-For durable OAuth tokens and command logs, set `DATABASE_URL` and apply [the initial schema migration](./migrations/001_initial_schema.sql) before starting the bot. Redis remains optional; without it, short-lived deduplication and rate-limit state is held in memory.
+With `YOUTUBE_CHANNEL_ID` configured, the app uses the authenticated YouTube Data API to find the channel's active public live video and then starts the `youtube-chat` listener for that discovered stream. No video ID or channel handle is required.
 
 ---
 

@@ -72,6 +72,40 @@ async function ensureYouTubeToken(ctx: BotContext): Promise<string | null> {
   }
 }
 
+interface YouTubeLiveSearchResponse {
+  items?: Array<{
+    id?: {
+      videoId?: string;
+    };
+  }>;
+}
+
+/** Finds the channel's currently active public live stream without relying on
+ * youtube-chat's brittle channel-page HTML parser. */
+async function discoverLiveVideoId(
+  channelId: string,
+  accessToken: string
+): Promise<string | null> {
+  const params = new URLSearchParams({
+    part: "id",
+    channelId,
+    eventType: "live",
+    type: "video",
+    maxResults: "1",
+  });
+  const res = await fetch(
+    `https://www.googleapis.com/youtube/v3/search?${params.toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (!res.ok) {
+    throw new Error(`YouTube live discovery failed (${res.status})`);
+  }
+
+  const data = (await res.json()) as YouTubeLiveSearchResponse;
+  return data.items?.[0]?.id?.videoId ?? null;
+}
+
 async function sendYouTubeMessage(
   videoId: string,
   accessToken: string,
@@ -126,10 +160,10 @@ export function startYouTube(ctx: BotContext): () => void {
     return () => undefined;
   }
 
-  const id = { channelId };
+  const configuredChannelId = channelId;
   let activeClient: LiveChat | null = null;
   let reconnectTimer: NodeJS.Timeout | null = null;
-  let reconnectDelayMs = 5_000;
+  let reconnectDelayMs = 60_000;
   let generation = 0;
   let stopped = false;
   const maxReconnectDelayMs = 300_000;
@@ -203,7 +237,7 @@ export function startYouTube(ctx: BotContext): () => void {
     });
   };
 
-  function startSession(): void {
+  async function startSession(): Promise<void> {
     if (stopped) return;
     const session = ++generation;
     const previous = activeClient;
@@ -211,7 +245,33 @@ export function startYouTube(ctx: BotContext): () => void {
     // Incrementing generation above makes end/error events from the old client inert.
     if (previous) previous.stop("replaced by new session");
 
-    const client = new LiveChat(id);
+    log("youtube", "info", `Discovering active public live stream for channel ${configuredChannelId}...`);
+    const accessToken = await ensureYouTubeToken(ctx);
+    if (stopped || session !== generation) return;
+    if (!accessToken) {
+      log("youtube", "warn", "YouTube credentials unavailable; cannot discover the live stream.");
+      scheduleReconnect(session);
+      return;
+    }
+
+    let liveId: string | null;
+    try {
+      liveId = await discoverLiveVideoId(configuredChannelId, accessToken);
+    } catch (err) {
+      if (stopped || session !== generation) return;
+      log("youtube", "error", `YouTube live discovery failed: ${(err as Error).message}`);
+      scheduleReconnect(session);
+      return;
+    }
+
+    if (stopped || session !== generation) return;
+    if (!liveId) {
+      log("youtube", "info", "No active public live stream found; retrying discovery.");
+      scheduleReconnect(session);
+      return;
+    }
+
+    const client = new LiveChat({ liveId });
     activeClient = client;
     client.on("chat", (chat: any) => {
       void handleChat(client, chat).catch((err) =>
@@ -225,27 +285,27 @@ export function startYouTube(ctx: BotContext): () => void {
     });
     client.on("end", () => {
       if (session !== generation || stopped) return;
-      log("youtube", "warn", "YouTube live chat stream ended.");
+      log("youtube", "warn", "YouTube live chat stream ended; looking for the next stream.");
       scheduleReconnect(session);
     });
     void client.start().then((ok: boolean) => {
       if (session !== generation || stopped) return;
       if (ok) {
-        reconnectDelayMs = 5_000;
-        const label = `channel ${channelId}`;
+        reconnectDelayMs = 60_000;
+        const label = `channel ${configuredChannelId}`;
         log("youtube", "info", `Listening to YouTube live chat (${label}).`);
       } else {
-        log("youtube", "warn", "YouTube live chat did not start (stream may be offline); retrying.");
+        log("youtube", "warn", "YouTube live chat did not start after discovery; retrying.");
         scheduleReconnect(session);
       }
     }).catch((err: any) => {
       if (session !== generation || stopped) return;
-      log("youtube", "error", `YouTube start failed: ${err?.message ?? err}`);
+      log("youtube", "error", `YouTube start failed after discovery: ${err?.message ?? err}`);
       scheduleReconnect(session);
     });
   }
 
-  startSession();
+  void startSession();
   return () => {
     stopped = true;
     generation++;

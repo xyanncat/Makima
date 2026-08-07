@@ -59,7 +59,7 @@ State layer
 
 ## Completed Repairs
 
-- Channel ID mode can now reply using the live ID discovered by the listener.
+- Channel ID startup uses the authenticated YouTube Data API to find the active public live video before starting the LiveChat listener, avoiding brittle channel-page HTML discovery.
 - Listener startup failures, errors, and stream endings trigger guarded exponential-backoff reconnects.
 - Duplicate protection uses author channel ID, message timestamp, and text instead of `Date.now()`.
 - Command prefix and rate-limit duration are configurable and validated.
