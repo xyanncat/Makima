@@ -40,7 +40,8 @@ The OAuth refresh token must be created while signed into the dedicated Google b
 
 ```text
 YouTube live chat
-  -> LiveChat listener
+  -> YouTube Data API live-stream discovery
+  -> liveChatMessages polling
   -> command prefix parser
   -> injection / duplicate / rate-limit guard
   -> outbound queue
@@ -59,7 +60,7 @@ State layer
 
 ## Completed Repairs
 
-- Channel ID startup uses the authenticated YouTube Data API to find the active public live video before starting the LiveChat listener, avoiding brittle channel-page HTML discovery.
+- Channel ID startup uses the authenticated YouTube Data API to find the active public live video, obtain its live-chat ID, and poll messages directly without relying on `youtube-chat` HTML parsing.
 - Listener startup failures, errors, and stream endings trigger guarded exponential-backoff reconnects.
 - Duplicate protection uses author channel ID, message timestamp, and text instead of `Date.now()`.
 - Command prefix and rate-limit duration are configurable and validated.

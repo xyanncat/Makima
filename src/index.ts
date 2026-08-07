@@ -92,7 +92,7 @@ async function main() {
       youtube: {
         status: statusOf(Boolean(config.youtube.channelId)),
         channelId: config.youtube.channelId ?? "Not configured",
-        mode: "Channel ID discovery + LiveChat Listener + API Sender",
+        mode: "Channel ID discovery + Data API live-chat polling + API Sender",
       },
       ai: {
         primary: config.groq.primaryModel,

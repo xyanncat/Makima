@@ -46,7 +46,7 @@
 
 | Platform | Chat Listener | Chat Sender | Authentication Required |
 | :--- | :--- | :--- | :--- |
-| <img src="https://img.shields.io/badge/YouTube-FF0000?style=flat-square&logo=youtube&logoColor=white" height="20"> | **LiveChat Listener** (`youtube-chat`) | **Google API Client** | OAuth2 Client ID & Refresh Token |
+| <img src="https://img.shields.io/badge/YouTube-FF0000?style=flat-square&logo=youtube&logoColor=white" height="20"> | **YouTube Data API live-chat poller** | **Google API Client** | OAuth2 Client ID & Refresh Token |
 
 ---
 
@@ -78,7 +78,7 @@ YOUTUBE_REFRESH_TOKEN=1//0xxxxxxxxx
 ```
 </details>
 
-With `YOUTUBE_CHANNEL_ID` configured, the app uses the authenticated YouTube Data API to find the channel's active public live video and then starts the `youtube-chat` listener for that discovered stream. No video ID or channel handle is required.
+With `YOUTUBE_CHANNEL_ID` configured, the app uses the authenticated YouTube Data API to find the channel's active public live video, obtains its live-chat ID, and polls chat messages directly. No video ID, channel handle, or HTML scraping dependency is required.
 
 ---
 

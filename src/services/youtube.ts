@@ -1,4 +1,3 @@
-import { LiveChat } from "youtube-chat";
 import { BotContext, guardMessage } from "./context";
 import { generateResponse } from "./ai";
 import { OAuthTokenRecord } from "./db";
@@ -72,16 +71,28 @@ async function ensureYouTubeToken(ctx: BotContext): Promise<string | null> {
   }
 }
 
-interface YouTubeLiveSearchResponse {
-  items?: Array<{
-    id?: {
-      videoId?: string;
+interface YouTubeLiveChatItem {
+  id?: string;
+  snippet?: {
+    publishedAt?: string;
+    displayMessage?: string;
+    textMessageDetails?: {
+      messageText?: string;
     };
-  }>;
+  };
+  authorDetails?: {
+    channelId?: string;
+    displayName?: string;
+  };
 }
 
-/** Finds the channel's currently active public live stream without relying on
- * youtube-chat's brittle channel-page HTML parser. */
+interface YouTubeLiveChatResponse {
+  items?: YouTubeLiveChatItem[];
+  nextPageToken?: string;
+  pollingIntervalMillis?: number;
+}
+
+/** Finds the channel's currently active public live stream through the YouTube API. */
 async function discoverLiveVideoId(
   channelId: string,
   accessToken: string
@@ -102,8 +113,57 @@ async function discoverLiveVideoId(
     throw new Error(`YouTube live discovery failed (${res.status})`);
   }
 
-  const data = (await res.json()) as YouTubeLiveSearchResponse;
+  const data = (await res.json()) as {
+    items?: Array<{ id?: { videoId?: string } }>;
+  };
   return data.items?.[0]?.id?.videoId ?? null;
+}
+
+async function getActiveLiveChatId(
+  videoId: string,
+  accessToken: string
+): Promise<string | null> {
+  const params = new URLSearchParams({
+    part: "liveStreamingDetails",
+    id: videoId,
+  });
+  const res = await fetch(
+    `https://www.googleapis.com/youtube/v3/videos?${params.toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (!res.ok) {
+    throw new Error(`YouTube video lookup failed (${res.status})`);
+  }
+
+  const data = (await res.json()) as {
+    items?: Array<{ liveStreamingDetails?: { activeLiveChatId?: string } }>;
+  };
+  return data.items?.[0]?.liveStreamingDetails?.activeLiveChatId ?? null;
+}
+
+async function fetchLiveChatMessages(
+  liveChatId: string,
+  accessToken: string,
+  pageToken?: string
+): Promise<YouTubeLiveChatResponse> {
+  const params = new URLSearchParams({
+    liveChatId,
+    part: "snippet,authorDetails",
+    maxResults: "200",
+  });
+  if (pageToken) params.set("pageToken", pageToken);
+
+  const res = await fetch(
+    `https://www.googleapis.com/youtube/v3/liveChatMessages?${params.toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (!res.ok) {
+    throw new Error(`YouTube live chat polling failed (${res.status})`);
+  }
+
+  return (await res.json()) as YouTubeLiveChatResponse;
 }
 
 async function sendYouTubeMessage(
@@ -111,12 +171,7 @@ async function sendYouTubeMessage(
   accessToken: string,
   message: string
 ): Promise<void> {
-  const metaRes = await fetch(
-    `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${videoId}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  const meta = (await metaRes.json()) as any;
-  const liveChatId = meta?.items?.[0]?.liveStreamingDetails?.activeLiveChatId;
+  const liveChatId = await getActiveLiveChatId(videoId, accessToken);
   if (!liveChatId) {
     throw new Error("No active live chat found for this video.");
   }
@@ -150,7 +205,26 @@ function chatText(message: any[]): string {
     .join("");
 }
 
-/** Starts a self-healing listener and returns an idempotent shutdown function. */
+function normalizeLiveChatItem(item: YouTubeLiveChatItem): any | null {
+  const text = item.snippet?.displayMessage
+    ?? item.snippet?.textMessageDetails?.messageText
+    ?? "";
+  if (!text) return null;
+
+  return {
+    id: item.id,
+    message: [{ text }],
+    author: {
+      name: item.authorDetails?.displayName ?? "unknown",
+      channelId: item.authorDetails?.channelId ?? "unknown",
+    },
+    timestamp: item.snippet?.publishedAt
+      ? new Date(item.snippet.publishedAt)
+      : new Date(),
+  };
+}
+
+/** Starts an API-backed self-healing live-chat poller and returns a shutdown function. */
 export function startYouTube(ctx: BotContext): () => void {
   const { config, queues, log } = ctx;
   const { channelId } = config.youtube;
@@ -161,26 +235,32 @@ export function startYouTube(ctx: BotContext): () => void {
   }
 
   const configuredChannelId = channelId;
-  let activeClient: LiveChat | null = null;
   let reconnectTimer: NodeJS.Timeout | null = null;
+  let pollTimer: NodeJS.Timeout | null = null;
+  let nextPageToken: string | undefined;
   let reconnectDelayMs = 60_000;
   let generation = 0;
   let stopped = false;
   const maxReconnectDelayMs = 300_000;
 
+  const clearPollTimer = () => {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = null;
+  };
+
   const scheduleReconnect = (session: number) => {
     if (stopped || session !== generation || reconnectTimer) return;
     const delay = reconnectDelayMs;
-    log("youtube", "info", `Reconnecting YouTube chat client in ${delay / 1000}s...`);
+    log("youtube", "info", `Reconnecting YouTube chat listener in ${delay / 1000}s...`);
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       reconnectDelayMs = Math.min(reconnectDelayMs * 2, maxReconnectDelayMs);
-      startSession();
+      void startSession();
     }, delay);
     reconnectTimer.unref();
   };
 
-  const handleChat = async (client: LiveChat, chat: any) => {
+  const handleChat = async (videoId: string, chat: any) => {
     const text: string = chatText(chat.message);
     const author: string = chat.author?.name ?? "unknown";
     const authorId: string = chat.author?.channelId ?? author;
@@ -190,10 +270,12 @@ export function startYouTube(ctx: BotContext): () => void {
     const prompt = trimmed.slice(config.commandPrefix.length).trim();
     if (prompt.length === 0) return;
 
-    // youtube-chat does not expose YouTube's message id. Its timestamp is stable
-    // across a replay, unlike Date.now(), so it still makes deduplication useful.
-    const timestamp = chat.timestamp instanceof Date ? chat.timestamp.getTime() : String(chat.timestamp ?? "unknown");
-    const messageId = `youtube:${authorId}:${timestamp}:${trimmed}`;
+    const timestamp = chat.timestamp instanceof Date
+      ? chat.timestamp.getTime()
+      : String(chat.timestamp ?? "unknown");
+    const messageId = chat.id
+      ? `youtube:${chat.id}`
+      : `youtube:${authorId}:${timestamp}:${trimmed}`;
     const guard = await guardMessage(ctx, "youtube", messageId, authorId, prompt);
     if (!guard.ok) return;
 
@@ -202,18 +284,13 @@ export function startYouTube(ctx: BotContext): () => void {
     queues.youtube.enqueue(async () => {
       const started = Date.now();
       try {
-        const activeVideoId = client.liveId;
-        if (!activeVideoId) {
-          log("youtube", "warn", "No active live video ID found; skipping response.");
-          return;
-        }
         const accessToken = await ensureYouTubeToken(ctx);
         if (!accessToken) {
           log("youtube", "warn", "(no YouTube credentials) skipping send.");
           return;
         }
         const replyText = await generateResponse(prompt);
-        await sendYouTubeMessage(activeVideoId, accessToken, replyText);
+        await sendYouTubeMessage(videoId, accessToken, replyText);
         log("youtube", "info", `-> ${replyText}`);
         await ctx.store.logCommand({
           platform: "youtube",
@@ -237,13 +314,56 @@ export function startYouTube(ctx: BotContext): () => void {
     });
   };
 
+  const pollChat = async (
+    session: number,
+    videoId: string,
+    liveChatId: string
+  ): Promise<void> => {
+    if (stopped || session !== generation) return;
+
+    try {
+      const accessToken = await ensureYouTubeToken(ctx);
+      if (!accessToken) {
+        log("youtube", "warn", "YouTube credentials unavailable; stopping chat polling.");
+        scheduleReconnect(session);
+        return;
+      }
+
+      const page = await fetchLiveChatMessages(liveChatId, accessToken, nextPageToken);
+      if (stopped || session !== generation) return;
+
+      nextPageToken = page.nextPageToken;
+      for (const item of page.items ?? []) {
+        const chat = normalizeLiveChatItem(item);
+        if (chat) {
+          void handleChat(videoId, chat).catch((err) =>
+            log("youtube", "error", `YouTube chat handling failed: ${(err as Error).message}`)
+          );
+        }
+      }
+
+      const delay = Math.max(
+        1_000,
+        Math.min(page.pollingIntervalMillis ?? 5_000, 60_000)
+      );
+      pollTimer = setTimeout(() => {
+        pollTimer = null;
+        void pollChat(session, videoId, liveChatId);
+      }, delay);
+      pollTimer.unref();
+    } catch (err) {
+      if (stopped || session !== generation) return;
+      pollTimer = null;
+      log("youtube", "error", `YouTube live chat polling failed: ${(err as Error).message}`);
+      scheduleReconnect(session);
+    }
+  };
+
   async function startSession(): Promise<void> {
     if (stopped) return;
     const session = ++generation;
-    const previous = activeClient;
-    activeClient = null;
-    // Incrementing generation above makes end/error events from the old client inert.
-    if (previous) previous.stop("replaced by new session");
+    clearPollTimer();
+    nextPageToken = undefined;
 
     log("youtube", "info", `Discovering active public live stream for channel ${configuredChannelId}...`);
     const accessToken = await ensureYouTubeToken(ctx);
@@ -271,38 +391,26 @@ export function startYouTube(ctx: BotContext): () => void {
       return;
     }
 
-    const client = new LiveChat({ liveId });
-    activeClient = client;
-    client.on("chat", (chat: any) => {
-      void handleChat(client, chat).catch((err) =>
-        log("youtube", "error", `YouTube chat handling failed: ${(err as Error).message}`)
-      );
-    });
-    client.on("error", (err: any) => {
-      if (session !== generation || stopped) return;
-      log("youtube", "error", `YouTube listener error: ${err?.message ?? err}`);
+    let liveChatId: string | null;
+    try {
+      liveChatId = await getActiveLiveChatId(liveId, accessToken);
+    } catch (err) {
+      if (stopped || session !== generation) return;
+      log("youtube", "error", `YouTube live-chat lookup failed: ${(err as Error).message}`);
       scheduleReconnect(session);
-    });
-    client.on("end", () => {
-      if (session !== generation || stopped) return;
-      log("youtube", "warn", "YouTube live chat stream ended; looking for the next stream.");
+      return;
+    }
+
+    if (stopped || session !== generation) return;
+    if (!liveChatId) {
+      log("youtube", "warn", "The active stream has no available live chat; retrying discovery.");
       scheduleReconnect(session);
-    });
-    void client.start().then((ok: boolean) => {
-      if (session !== generation || stopped) return;
-      if (ok) {
-        reconnectDelayMs = 60_000;
-        const label = `channel ${configuredChannelId}`;
-        log("youtube", "info", `Listening to YouTube live chat (${label}).`);
-      } else {
-        log("youtube", "warn", "YouTube live chat did not start after discovery; retrying.");
-        scheduleReconnect(session);
-      }
-    }).catch((err: any) => {
-      if (session !== generation || stopped) return;
-      log("youtube", "error", `YouTube start failed after discovery: ${err?.message ?? err}`);
-      scheduleReconnect(session);
-    });
+      return;
+    }
+
+    reconnectDelayMs = 60_000;
+    log("youtube", "info", `Listening to YouTube live chat (channel ${configuredChannelId}).`);
+    void pollChat(session, liveId, liveChatId);
   }
 
   void startSession();
@@ -311,7 +419,6 @@ export function startYouTube(ctx: BotContext): () => void {
     generation++;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = null;
-    activeClient?.stop("application shutdown");
-    activeClient = null;
+    clearPollTimer();
   };
 }
