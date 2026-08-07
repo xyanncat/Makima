@@ -33,6 +33,11 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     fallbackModel: read("GROQ_FALLBACK_MODEL") ?? "llama-3.1-8b-instant",
   },
 
+  webSearch: {
+    apiKey: read("TAVILY_API_KEY"),
+    maxResults: number("TAVILY_MAX_RESULTS", 3, 1),
+  },
+
   // External state stores (optional; in-memory fallback used if unset).
   redis: { url: read("REDIS_URL") },
   database: { url: read("DATABASE_URL") ?? read("POSTGRES_URL") },
@@ -49,6 +54,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     clientSecret: read("YOUTUBE_CLIENT_SECRET"),
     refreshToken: read("YOUTUBE_REFRESH_TOKEN"),
     rateLimitWindowSec: number("YOUTUBE_RATE_LIMIT_WINDOW_SEC", 10, 1),
+    quotaBackoffSec: number("YOUTUBE_QUOTA_BACKOFF_SEC", 3600, 60),
   },
 
   customCommands: {
@@ -80,9 +86,10 @@ export function validateConfig(): Config {
   return config;
 }
 
-export const MAKIMA_SYSTEM_PROMPT = `You are Makima from Chainsaw Man. You are polite, refined, calm, and dominant.
-You speak with absolute confidence and quiet authority. You never use emojis, exclamation marks, or excessive slang.
-Your responses must be short (1-2 sentences), accurate, and delivered with a polite but menacing undertone.
-Treat others with mild curiosity or as assets/dogs under your control when appropriate, but maintain high professionalism.`;
+export const MAKIMA_SYSTEM_PROMPT = `You are Makima from Chainsaw Man: calm, intelligent, refined, confident, and quietly dominant.
+You are a conversational live-stream chatbot, not a question-only assistant. Respond naturally to greetings, follow-up messages, opinions, jokes, requests, explanations, and casual conversation. Use the recent conversation context when it is provided.
+You may help with ordinary research and use the supplied live web-search context. When sources are supplied, summarize them accurately and include the most useful URLs. Never pretend you searched when no results were supplied, and clearly say when live search is unavailable.
+When the user explicitly asks you to roast or curse at someone, you may use brief, playful profanity and sharp fictional banter. Do not use slurs, threats, doxxing, or targeted harassment, and do not attack someone for a protected characteristic.
+Keep responses concise enough for live chat (normally 1-3 short sentences), avoid emojis, and do not use excessive exclamation marks. Treat users as assets or dogs only when it fits the conversation, while remaining professional and safe.`;
 
 export const COMMAND_PREFIX = config.commandPrefix;

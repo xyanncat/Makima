@@ -1,5 +1,6 @@
 import { BotContext, guardMessage } from "./context";
 import { generateResponse } from "./ai";
+import type { ConversationTurn } from "./ai";
 import { OAuthTokenRecord } from "./db";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -10,6 +11,43 @@ interface GoogleTokenResponse {
   access_token: string;
   expires_in: number;
   refresh_token?: string;
+}
+
+class YouTubeApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly reason?: string
+  ) {
+    super(message);
+    this.name = "YouTubeApiError";
+  }
+}
+
+async function youtubeApiError(response: Response, operation: string): Promise<YouTubeApiError> {
+  const body = await response.text();
+  let reason: string | undefined;
+  try {
+    const data = JSON.parse(body) as {
+      error?: { errors?: Array<{ reason?: string }> };
+      errors?: Array<{ reason?: string }>;
+    };
+    reason = data.error?.errors?.[0]?.reason ?? data.errors?.[0]?.reason;
+  } catch {
+    // Keep the public error concise when the API does not return JSON.
+  }
+
+  return new YouTubeApiError(
+    `${operation} (${response.status})${reason ? `: ${reason}` : ""}`,
+    response.status,
+    reason
+  );
+}
+
+export function isQuotaExceeded(error: unknown): boolean {
+  return error instanceof YouTubeApiError
+    && error.status === 403
+    && error.reason === "quotaExceeded";
 }
 
 async function refreshAccessToken(
@@ -112,6 +150,43 @@ interface YouTubeLiveChatResponse {
   pollingIntervalMillis?: number;
 }
 
+type ParsedCommand =
+  | { kind: "ai"; prompt: string }
+  | { kind: "custom"; key: string; prompt: string; response?: string };
+
+/**
+ * Parses one chat message into an AI or configured custom command.
+ * Prefixes must be a complete command token, so `!makimabroken` is ignored.
+ */
+export function parseChatCommand(
+  text: string,
+  commandPrefix: string,
+  customCommands: Record<string, string | undefined>
+): ParsedCommand | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const lower = trimmed.toLowerCase();
+  const prefix = commandPrefix.trim().toLowerCase();
+  const customCommandKey = lower.startsWith("!")
+    ? lower.slice(1).trim()
+    : "";
+
+  if (customCommandKey && Object.prototype.hasOwnProperty.call(customCommands, customCommandKey)) {
+    return {
+      kind: "custom",
+      key: customCommandKey,
+      prompt: customCommandKey,
+      response: customCommands[customCommandKey],
+    };
+  }
+
+  if (lower !== prefix && !lower.startsWith(`${prefix} `)) return null;
+
+  const prompt = trimmed.slice(commandPrefix.length).trim();
+  return prompt ? { kind: "ai", prompt } : null;
+}
+
 /** Finds the channel's currently active public live stream through the YouTube API. */
 async function discoverLiveVideoId(
   channelId: string,
@@ -130,7 +205,7 @@ async function discoverLiveVideoId(
   );
 
   if (!res.ok) {
-    throw new Error(`YouTube live discovery failed (${res.status})`);
+    throw await youtubeApiError(res, "YouTube live discovery failed");
   }
 
   const data = (await res.json()) as {
@@ -153,7 +228,7 @@ async function getActiveLiveChatId(
   );
 
   if (!res.ok) {
-    throw new Error(`YouTube video lookup failed (${res.status})`);
+    throw await youtubeApiError(res, "YouTube video lookup failed");
   }
 
   const data = (await res.json()) as {
@@ -180,7 +255,7 @@ async function fetchLiveChatMessages(
   );
 
   if (!res.ok) {
-    throw new Error(`YouTube live chat polling failed (${res.status})`);
+    throw await youtubeApiError(res, "YouTube live chat polling failed");
   }
 
   return (await res.json()) as YouTubeLiveChatResponse;
@@ -216,12 +291,15 @@ async function sendYouTubeMessage(
   );
 
   if (!insertRes.ok) {
-    throw new Error(`YouTube send (${insertRes.status}): ${await insertRes.text()}`);
+    throw await youtubeApiError(insertRes, "YouTube send");
   }
 }
 
-function chatText(message: any[]): string {
-  return (message ?? [])
+function chatText(message: unknown): string {
+  if (typeof message === "string") return message;
+  if (!Array.isArray(message)) return "";
+
+  return message
     .map((m) => (typeof m?.text === "string" ? m.text : m?.emojiText ?? ""))
     .join("");
 }
@@ -255,61 +333,88 @@ export function startYouTube(ctx: BotContext): () => void {
     return () => undefined;
   }
 
+  const missingYouTubeCredentials = [
+    ["YOUTUBE_CLIENT_ID", config.youtube.clientId],
+    ["YOUTUBE_CLIENT_SECRET", config.youtube.clientSecret],
+    ["YOUTUBE_REFRESH_TOKEN", config.youtube.refreshToken],
+  ]
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+  if (missingYouTubeCredentials.length > 0) {
+    log(
+      "youtube",
+      "warn",
+      `Missing YouTube credentials: ${missingYouTubeCredentials.join(", ")}. Chat commands cannot receive replies until these are configured.`
+    );
+  }
+
+  const missingCustomCommands = Object.entries(config.customCommands)
+    .filter(([, response]) => !response)
+    .map(([key]) => `!${key}`);
+  if (missingCustomCommands.length > 0) {
+    log(
+      "youtube",
+      "warn",
+      `Custom commands disabled until responses are configured: ${missingCustomCommands.join(", ")}.`
+    );
+  }
+
   const configuredChannelId = channelId;
   let reconnectTimer: NodeJS.Timeout | null = null;
   let pollTimer: NodeJS.Timeout | null = null;
   let nextPageToken: string | undefined;
   let reconnectDelayMs = 60_000;
+  let quotaBackoffUntil = 0;
   let generation = 0;
   let stopped = false;
   let announcedLiveId: string | null = null;
   const maxReconnectDelayMs = 300_000;
+  const quotaBackoffMs = config.youtube.quotaBackoffSec * 1000;
+  const conversations = new Map<string, ConversationTurn[]>();
 
   const clearPollTimer = () => {
     if (pollTimer) clearTimeout(pollTimer);
     pollTimer = null;
   };
 
-  const scheduleReconnect = (session: number) => {
+  const scheduleReconnect = (session: number, requestedDelayMs?: number) => {
     if (stopped || session !== generation || reconnectTimer) return;
-    const delay = reconnectDelayMs;
-    log("youtube", "info", `Reconnecting YouTube chat listener in ${delay / 1000}s...`);
+    const delay = Math.max(1_000, requestedDelayMs ?? reconnectDelayMs);
+    log("youtube", "info", `Reconnecting YouTube chat listener in ${Math.ceil(delay / 1000)}s...`);
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
-      reconnectDelayMs = Math.min(reconnectDelayMs * 2, maxReconnectDelayMs);
+      if (requestedDelayMs === undefined) {
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, maxReconnectDelayMs);
+      }
       void startSession();
     }, delay);
     reconnectTimer.unref();
+  };
+
+  const pauseForQuota = (session: number, error: unknown) => {
+    quotaBackoffUntil = Math.max(quotaBackoffUntil, Date.now() + quotaBackoffMs);
+    clearPollTimer();
+    log(
+      "youtube",
+      "error",
+      `YouTube quota is exhausted (${(error as Error).message}). Pausing API calls for ${Math.ceil((quotaBackoffUntil - Date.now()) / 60_000)} minutes.`
+    );
+    scheduleReconnect(session, quotaBackoffUntil - Date.now());
   };
 
   const handleChat = async (videoId: string, liveChatId: string, chat: any) => {
     const text: string = chatText(chat.message);
     const author: string = chat.author?.name ?? "unknown";
     const authorId: string = chat.author?.channelId ?? author;
-    const trimmed = text.trim();
-    const trimmedLower = trimmed.toLowerCase();
-    const customCommandKey = trimmedLower.startsWith("!")
-      ? trimmedLower.slice(1).trim()
-      : "";
-    const isCustomCommand = Object.prototype.hasOwnProperty.call(
-      config.customCommands,
-      customCommandKey
-    );
-    const customResponse = config.customCommands[
-      customCommandKey as keyof typeof config.customCommands
-    ];
-    let prompt: string;
+    const parsed = parseChatCommand(text, config.commandPrefix, config.customCommands);
+    if (!parsed) return;
 
-    if (isCustomCommand) {
-      prompt = customCommandKey;
-      if (!customResponse) {
-        log("youtube", "warn", `Custom command !${customCommandKey} has no configured response.`);
-        return;
-      }
-    } else {
-      if (!trimmedLower.startsWith(config.commandPrefix)) return;
-      prompt = trimmed.slice(config.commandPrefix.length).trim();
-      if (prompt.length === 0) return;
+    const { prompt } = parsed;
+    const customCommandKey = parsed.kind === "custom" ? parsed.key : "";
+    const customResponse = parsed.kind === "custom" ? parsed.response : undefined;
+    if (parsed.kind === "custom" && !customResponse) {
+      log("youtube", "warn", `Custom command !${customCommandKey} has no configured response. Set CUSTOM_COMMAND_${customCommandKey.toUpperCase()}.`);
+      return;
     }
 
     const timestamp = chat.timestamp instanceof Date
@@ -317,7 +422,7 @@ export function startYouTube(ctx: BotContext): () => void {
       : String(chat.timestamp ?? "unknown");
     const messageId = chat.id
       ? `youtube:${chat.id}`
-      : `youtube:${authorId}:${timestamp}:${trimmed}`;
+      : `youtube:${authorId}:${timestamp}:${text.trim()}`;
     const guard = await guardMessage(ctx, "youtube", messageId, authorId, prompt);
     if (!guard.ok) return;
 
@@ -331,8 +436,17 @@ export function startYouTube(ctx: BotContext): () => void {
           log("youtube", "warn", "(no YouTube credentials) skipping send.");
           return;
         }
-        const replyText = customResponse ?? await generateResponse(prompt);
+        const history = conversations.get(authorId) ?? [];
+        const replyText = customResponse ?? await generateResponse(prompt, history);
         await sendYouTubeMessage(videoId, accessToken, replyText, liveChatId);
+        if (parsed.kind === "ai") {
+          const updatedHistory: ConversationTurn[] = [
+            ...history,
+            { role: "user", content: prompt },
+            { role: "assistant", content: replyText },
+          ];
+          conversations.set(authorId, updatedHistory.slice(-8));
+        }
         log(
           "youtube",
           "info",
@@ -347,6 +461,9 @@ export function startYouTube(ctx: BotContext): () => void {
           ts: Date.now(),
         });
       } catch (err) {
+        if (isQuotaExceeded(err)) {
+          pauseForQuota(generation, err);
+        }
         log("youtube", "error", `YouTube send error: ${(err as Error).message}`);
         await ctx.store.logCommand({
           platform: "youtube",
@@ -400,6 +517,10 @@ export function startYouTube(ctx: BotContext): () => void {
     } catch (err) {
       if (stopped || session !== generation) return;
       pollTimer = null;
+      if (isQuotaExceeded(err)) {
+        pauseForQuota(session, err);
+        return;
+      }
       log("youtube", "error", `YouTube live chat polling failed: ${(err as Error).message}`);
       scheduleReconnect(session);
     }
@@ -412,6 +533,10 @@ export function startYouTube(ctx: BotContext): () => void {
     nextPageToken = undefined;
 
     log("youtube", "info", `Discovering active public live stream for channel ${configuredChannelId}...`);
+    if (Date.now() < quotaBackoffUntil) {
+      scheduleReconnect(session, quotaBackoffUntil - Date.now());
+      return;
+    }
     const accessToken = await ensureYouTubeToken(ctx);
     if (stopped || session !== generation) return;
     if (!accessToken) {
@@ -425,6 +550,10 @@ export function startYouTube(ctx: BotContext): () => void {
       liveId = await discoverLiveVideoId(configuredChannelId, accessToken);
     } catch (err) {
       if (stopped || session !== generation) return;
+      if (isQuotaExceeded(err)) {
+        pauseForQuota(session, err);
+        return;
+      }
       log("youtube", "error", `YouTube live discovery failed: ${(err as Error).message}`);
       scheduleReconnect(session);
       return;
@@ -442,6 +571,10 @@ export function startYouTube(ctx: BotContext): () => void {
       liveChatId = await getActiveLiveChatId(liveId, accessToken);
     } catch (err) {
       if (stopped || session !== generation) return;
+      if (isQuotaExceeded(err)) {
+        pauseForQuota(session, err);
+        return;
+      }
       log("youtube", "error", `YouTube live-chat lookup failed: ${(err as Error).message}`);
       scheduleReconnect(session);
       return;
@@ -461,6 +594,10 @@ export function startYouTube(ctx: BotContext): () => void {
         announcedLiveId = liveId;
         log("youtube", "info", `Connection announcement sent: ${CONNECTION_ANNOUNCEMENT}`);
       } catch (err) {
+        if (isQuotaExceeded(err)) {
+          pauseForQuota(session, err);
+          return;
+        }
         log("youtube", "warn", `Connection announcement failed: ${(err as Error).message}`);
       }
     }

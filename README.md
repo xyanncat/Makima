@@ -62,7 +62,9 @@ To boot the bot, configure the following variables inside a local `.env` file or
 *   `GROQ_API_KEY`: Your Groq Cloud access key.
 *   `GROQ_PRIMARY_MODEL`: Defaults to `llama-3.1-70b-versatile`.
 *   `GROQ_FALLBACK_MODEL`: Defaults to `llama-3.1-8b-instant`.
-*   `COMMAND_PREFIX`: The AI command prefix is fixed to `!makima`; other values are ignored.
+*   `TAVILY_API_KEY`: Optional live web-search key used when a message asks Makima to search, look something up, or find current/news information.
+*   `TAVILY_MAX_RESULTS`: Number of search results supplied to Makima (default `3`).
+*   `COMMAND_PREFIX`: The AI command prefix is fixed to `!makima`; the text after it is a free-form conversational message, not limited to questions.
 *   `CUSTOM_COMMAND_INSTA`: Response sent by `!insta`.
 *   `CUSTOM_COMMAND_DC`: Response sent by `!dc`.
 *   `CUSTOM_COMMAND_SPECS`: Response sent by `!specs`.
@@ -78,6 +80,7 @@ YOUTUBE_RATE_LIMIT_WINDOW_SEC=10
 YOUTUBE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
 YOUTUBE_CLIENT_SECRET=gsecs_xxxxxxxxx
 YOUTUBE_REFRESH_TOKEN=1//0xxxxxxxxx
+YOUTUBE_QUOTA_BACKOFF_SEC=3600
 CUSTOM_COMMAND_INSTA=https://instagram.com/your-account
 CUSTOM_COMMAND_DC=https://discord.gg/your-server
 CUSTOM_COMMAND_SPECS=Your specs text here
