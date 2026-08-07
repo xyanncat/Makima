@@ -21,8 +21,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     return value;
   };
 
-  const commandPrefix = (read("COMMAND_PREFIX") ?? "!").toLowerCase();
-  if (!commandPrefix) throw new Error("COMMAND_PREFIX must not be empty");
+  const commandPrefix = "!";
 
   const loaded = {
   port: number("PORT", 3000, 1),
@@ -50,6 +49,12 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     clientSecret: read("YOUTUBE_CLIENT_SECRET"),
     refreshToken: read("YOUTUBE_REFRESH_TOKEN"),
     rateLimitWindowSec: number("YOUTUBE_RATE_LIMIT_WINDOW_SEC", 10, 1),
+  },
+
+  customCommands: {
+    insta: read("CUSTOM_COMMAND_INSTA"),
+    dc: read("CUSTOM_COMMAND_DC"),
+    specs: read("CUSTOM_COMMAND_SPECS"),
   },
 
   // Outbound queue throttle (ms between messages) and buffer cap.

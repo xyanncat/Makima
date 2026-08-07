@@ -62,7 +62,10 @@ To boot the bot, configure the following variables inside a local `.env` file or
 *   `GROQ_API_KEY`: Your Groq Cloud access key.
 *   `GROQ_PRIMARY_MODEL`: Defaults to `llama-3.1-70b-versatile`.
 *   `GROQ_FALLBACK_MODEL`: Defaults to `llama-3.1-8b-instant`.
-*   `COMMAND_PREFIX`: Chat command trigger; defaults to `!`.
+*   `COMMAND_PREFIX`: The only command prefix is `!`; other values are ignored.
+*   `CUSTOM_COMMAND_INSTA`: Response sent by `!insta`.
+*   `CUSTOM_COMMAND_DC`: Response sent by `!dc`.
+*   `CUSTOM_COMMAND_SPECS`: Response sent by `!specs`.
 
 <details>
 <summary><b>🔑 Click to view Platform Connection Config</b></summary>
@@ -75,6 +78,9 @@ YOUTUBE_RATE_LIMIT_WINDOW_SEC=10
 YOUTUBE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
 YOUTUBE_CLIENT_SECRET=gsecs_xxxxxxxxx
 YOUTUBE_REFRESH_TOKEN=1//0xxxxxxxxx
+CUSTOM_COMMAND_INSTA=https://instagram.com/your-account
+CUSTOM_COMMAND_DC=https://discord.gg/your-server
+CUSTOM_COMMAND_SPECS=Your specs text here
 ```
 </details>
 

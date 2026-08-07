@@ -7,6 +7,12 @@ describe("command parsing", () => {
     expect("hello makima".toLowerCase().startsWith(COMMAND_PREFIX)).toBe(false);
   });
 
+  it("only treats a single leading exclamation mark as a command", () => {
+    expect("!hello".startsWith(COMMAND_PREFIX)).toBe(true);
+    expect("hello !hello".startsWith(COMMAND_PREFIX)).toBe(false);
+    expect("!!hello".startsWith(`${COMMAND_PREFIX}${COMMAND_PREFIX}`)).toBe(true);
+  });
+
   it("extracts the prompt after the prefix", () => {
     const msg = "!tell me about control";
     const prompt = msg.slice(COMMAND_PREFIX.length).trim();
@@ -28,13 +34,21 @@ describe("Makima system prompt", () => {
 });
 
 describe("configuration", () => {
-  it("normalizes a custom command prefix and rate-limit window", () => {
+  it("always uses the strict exclamation-mark prefix", () => {
     const configured = loadConfig({
       GROQ_API_KEY: "test-key",
-      COMMAND_PREFIX: " !Ask ",
+      COMMAND_PREFIX: "?ask",
+      CUSTOM_COMMAND_INSTA: "https://instagram.com/test",
+      CUSTOM_COMMAND_DC: "https://discord.gg/test",
+      CUSTOM_COMMAND_SPECS: "CPU: test",
       YOUTUBE_RATE_LIMIT_WINDOW_SEC: "15",
     });
-    expect(configured.commandPrefix).toBe("!ask");
+    expect(configured.commandPrefix).toBe("!");
+    expect(configured.customCommands).toEqual({
+      insta: "https://instagram.com/test",
+      dc: "https://discord.gg/test",
+      specs: "CPU: test",
+    });
     expect(configured.youtube.rateLimitWindowSec).toBe(15);
   });
 

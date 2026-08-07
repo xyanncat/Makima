@@ -286,10 +286,24 @@ export function startYouTube(ctx: BotContext): () => void {
     const author: string = chat.author?.name ?? "unknown";
     const authorId: string = chat.author?.channelId ?? author;
     const trimmed = text.trim();
-    if (!trimmed.toLowerCase().startsWith(config.commandPrefix)) return;
+    if (!trimmed.startsWith(config.commandPrefix)
+      || trimmed.startsWith(`${config.commandPrefix}${config.commandPrefix}`)) return;
 
     const prompt = trimmed.slice(config.commandPrefix.length).trim();
     if (prompt.length === 0) return;
+
+    const customCommandKey = prompt.toLowerCase();
+    const isCustomCommand = Object.prototype.hasOwnProperty.call(
+      config.customCommands,
+      customCommandKey
+    );
+    const customResponse = config.customCommands[
+      customCommandKey as keyof typeof config.customCommands
+    ];
+    if (isCustomCommand && !customResponse) {
+      log("youtube", "warn", `Custom command !${customCommandKey} has no configured response.`);
+      return;
+    }
 
     const timestamp = chat.timestamp instanceof Date
       ? chat.timestamp.getTime()
@@ -310,14 +324,18 @@ export function startYouTube(ctx: BotContext): () => void {
           log("youtube", "warn", "(no YouTube credentials) skipping send.");
           return;
         }
-        const replyText = await generateResponse(prompt);
+        const replyText = customResponse ?? await generateResponse(prompt);
         await sendYouTubeMessage(videoId, accessToken, replyText);
-        log("youtube", "info", `-> ${replyText}`);
+        log(
+          "youtube",
+          "info",
+          customResponse ? `-> custom command !${customCommandKey}` : `-> ${replyText}`
+        );
         await ctx.store.logCommand({
           platform: "youtube",
           user: author,
           prompt,
-          model: "groq",
+          model: customResponse ? `custom:${customCommandKey}` : "groq",
           latencyMs: Date.now() - started,
           ts: Date.now(),
         });

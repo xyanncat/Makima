@@ -26,7 +26,10 @@ GROQ_API_KEY=...
 
 DASHBOARD_USER=admin
 DASHBOARD_PASSWORD=<long-random-password>
-COMMAND_PREFIX=!
+# The only command prefix is !; it is not configurable.
+CUSTOM_COMMAND_INSTA=https://instagram.com/your-account
+CUSTOM_COMMAND_DC=https://discord.gg/your-server
+CUSTOM_COMMAND_SPECS=Your specs text here
 YOUTUBE_RATE_LIMIT_WINDOW_SEC=10
 YOUTUBE_QUEUE_MS=5000
 QUEUE_MAX_BUFFER=10
