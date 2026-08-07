@@ -60,7 +60,7 @@ State layer
 
 ## Completed Repairs
 
-- Channel ID startup uses the authenticated YouTube Data API to find the active public live video, obtain its live-chat ID, and poll messages directly without relying on `youtube-chat` HTML parsing.
+- Channel ID startup uses the authenticated YouTube Data API to find the active public live video, obtain its live-chat ID, poll messages directly, and announce `i am live` once per new stream.
 - Listener startup failures, errors, and stream endings trigger guarded exponential-backoff reconnects.
 - Duplicate protection uses author channel ID, message timestamp, and text instead of `Date.now()`.
 - Command prefix and rate-limit duration are configurable and validated.

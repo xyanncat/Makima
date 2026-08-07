@@ -3,6 +3,7 @@ import { generateResponse } from "./ai";
 import { OAuthTokenRecord } from "./db";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const youtubeTokenCache = new WeakMap<object, OAuthTokenRecord>();
 
 interface GoogleTokenResponse {
   access_token: string;
@@ -40,8 +41,19 @@ async function ensureYouTubeToken(ctx: BotContext): Promise<string | null> {
   const now = Date.now();
   const buffer = ctx.config.tokenRefreshBufferSec * 1000;
 
-  const rec = await ctx.store.getToken("youtube");
+  const cached = youtubeTokenCache.get(ctx.store);
+  if (cached?.access_token && cached.expires_at && cached.expires_at - now > buffer) {
+    return cached.access_token;
+  }
+
+  const hasConfiguredCredentials = Boolean(
+    ctx.config.youtube.refreshToken
+      && ctx.config.youtube.clientId
+      && ctx.config.youtube.clientSecret
+  );
+  const rec = hasConfiguredCredentials ? null : await ctx.store.getToken("youtube");
   if (rec?.access_token && rec.expires_at && rec.expires_at - now > buffer) {
+    youtubeTokenCache.set(ctx.store, rec);
     return rec.access_token;
   }
 
@@ -62,7 +74,14 @@ async function ensureYouTubeToken(ctx: BotContext): Promise<string | null> {
       refresh_token: tok.refresh_token ?? refreshToken,
       expires_at: expiresAt,
     };
-    await ctx.store.saveToken(updated);
+    youtubeTokenCache.set(ctx.store, updated);
+    if (!hasConfiguredCredentials) {
+      try {
+        await ctx.store.saveToken(updated);
+      } catch (err) {
+        ctx.log("youtube", "warn", `Token persistence unavailable; using in-memory token cache: ${(err as Error).message}`);
+      }
+    }
     ctx.log("youtube", "info", `Access token refreshed (expires in ${tok.expires_in}s).`);
     return tok.access_token;
   } catch (err) {
@@ -155,7 +174,7 @@ async function fetchLiveChatMessages(
   if (pageToken) params.set("pageToken", pageToken);
 
   const res = await fetch(
-    `https://www.googleapis.com/youtube/v3/liveChatMessages?${params.toString()}`,
+    `https://www.googleapis.com/youtube/v3/liveChat/messages?${params.toString()}`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
 
@@ -169,15 +188,16 @@ async function fetchLiveChatMessages(
 async function sendYouTubeMessage(
   videoId: string,
   accessToken: string,
-  message: string
+  message: string,
+  knownLiveChatId?: string
 ): Promise<void> {
-  const liveChatId = await getActiveLiveChatId(videoId, accessToken);
+  const liveChatId = knownLiveChatId ?? await getActiveLiveChatId(videoId, accessToken);
   if (!liveChatId) {
     throw new Error("No active live chat found for this video.");
   }
 
   const insertRes = await fetch(
-    "https://www.googleapis.com/youtube/v3/liveChatMessages?part=snippet",
+    "https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet",
     {
       method: "POST",
       headers: {
@@ -241,6 +261,7 @@ export function startYouTube(ctx: BotContext): () => void {
   let reconnectDelayMs = 60_000;
   let generation = 0;
   let stopped = false;
+  let announcedLiveId: string | null = null;
   const maxReconnectDelayMs = 300_000;
 
   const clearPollTimer = () => {
@@ -409,6 +430,15 @@ export function startYouTube(ctx: BotContext): () => void {
     }
 
     reconnectDelayMs = 60_000;
+    if (announcedLiveId !== liveId) {
+      try {
+        await sendYouTubeMessage(liveId, accessToken, "i am live", liveChatId);
+        announcedLiveId = liveId;
+        log("youtube", "info", "Connection announcement sent: i am live");
+      } catch (err) {
+        log("youtube", "warn", `Connection announcement failed: ${(err as Error).message}`);
+      }
+    }
     log("youtube", "info", `Listening to YouTube live chat (channel ${configuredChannelId}).`);
     void pollChat(session, liveId, liveChatId);
   }

@@ -78,7 +78,7 @@ YOUTUBE_REFRESH_TOKEN=1//0xxxxxxxxx
 ```
 </details>
 
-With `YOUTUBE_CHANNEL_ID` configured, the app uses the authenticated YouTube Data API to find the channel's active public live video, obtains its live-chat ID, and polls chat messages directly. No video ID, channel handle, or HTML scraping dependency is required.
+With `YOUTUBE_CHANNEL_ID` configured, the app uses the authenticated YouTube Data API to find the channel's active public live video, obtains its live-chat ID, and polls chat messages directly. No video ID, channel handle, or HTML scraping dependency is required. After connecting to a new live stream, it posts `i am live` once in that stream's chat.
 
 ---
 
