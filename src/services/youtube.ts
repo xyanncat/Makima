@@ -50,6 +50,11 @@ export function isQuotaExceeded(error: unknown): boolean {
     && error.reason === "quotaExceeded";
 }
 
+function isLiveChatUnavailable(error: unknown): boolean {
+  return error instanceof YouTubeApiError
+    && ["liveChatEnded", "liveChatDisabled", "liveChatNotFound", "notFound"].includes(error.reason ?? "");
+}
+
 async function refreshAccessToken(
   refreshToken: string,
   clientId: string,
@@ -148,6 +153,7 @@ interface YouTubeLiveChatResponse {
   items?: YouTubeLiveChatItem[];
   nextPageToken?: string;
   pollingIntervalMillis?: number;
+  offlineAt?: string;
 }
 
 type ParsedCommand =
@@ -245,7 +251,7 @@ async function fetchLiveChatMessages(
   const params = new URLSearchParams({
     liveChatId,
     part: "snippet,authorDetails",
-    maxResults: "200",
+    maxResults: "2000",
   });
   if (pageToken) params.set("pageToken", pageToken);
 
@@ -371,6 +377,8 @@ export function startYouTube(ctx: BotContext): () => void {
   const maxReconnectDelayMs = 300_000;
   const quotaBackoffMs = config.youtube.quotaBackoffSec * 1000;
   const conversations = new Map<string, ConversationTurn[]>();
+  let activeVideoId: string | null = null;
+  let activeLiveChatId: string | null = null;
 
   const clearPollTimer = () => {
     if (pollTimer) clearTimeout(pollTimer);
@@ -495,6 +503,15 @@ export function startYouTube(ctx: BotContext): () => void {
       const page = await fetchLiveChatMessages(liveChatId, accessToken, nextPageToken);
       if (stopped || session !== generation) return;
 
+      if (page.offlineAt) {
+        activeVideoId = null;
+        activeLiveChatId = null;
+        nextPageToken = undefined;
+        log("youtube", "info", "The live stream ended; clearing cached chat IDs and searching for a new stream.");
+        scheduleReconnect(session);
+        return;
+      }
+
       nextPageToken = page.nextPageToken;
       for (const item of page.items ?? []) {
         const chat = normalizeLiveChatItem(item);
@@ -532,11 +549,15 @@ export function startYouTube(ctx: BotContext): () => void {
     clearPollTimer();
     nextPageToken = undefined;
 
-    log("youtube", "info", `Discovering active public live stream for channel ${configuredChannelId}...`);
+    let liveId = activeVideoId;
+    let liveChatId = activeLiveChatId;
+    const usingCachedChat = Boolean(liveId && liveChatId);
+
     if (Date.now() < quotaBackoffUntil) {
       scheduleReconnect(session, quotaBackoffUntil - Date.now());
       return;
     }
+
     const accessToken = await ensureYouTubeToken(ctx);
     if (stopped || session !== generation) return;
     if (!accessToken) {
@@ -545,48 +566,55 @@ export function startYouTube(ctx: BotContext): () => void {
       return;
     }
 
-    let liveId: string | null;
-    try {
-      liveId = await discoverLiveVideoId(configuredChannelId, accessToken);
-    } catch (err) {
-      if (stopped || session !== generation) return;
-      if (isQuotaExceeded(err)) {
-        pauseForQuota(session, err);
+    if (usingCachedChat) {
+      log("youtube", "info", `Resuming cached YouTube live chat ${liveChatId}.`);
+    } else {
+      log("youtube", "info", `Discovering active public live stream for channel ${configuredChannelId}...`);
+      try {
+        liveId = await discoverLiveVideoId(configuredChannelId, accessToken);
+      } catch (err) {
+        if (stopped || session !== generation) return;
+        if (isQuotaExceeded(err)) {
+          pauseForQuota(session, err);
+          return;
+        }
+        log("youtube", "error", `YouTube live discovery failed: ${(err as Error).message}`);
+        scheduleReconnect(session);
         return;
       }
-      log("youtube", "error", `YouTube live discovery failed: ${(err as Error).message}`);
-      scheduleReconnect(session);
-      return;
+
+      if (stopped || session !== generation) return;
+      if (!liveId) {
+        log("youtube", "info", "No active public live stream found; retrying discovery.");
+        scheduleReconnect(session);
+        return;
+      }
+
+      try {
+        liveChatId = await getActiveLiveChatId(liveId, accessToken);
+      } catch (err) {
+        if (stopped || session !== generation) return;
+        if (isQuotaExceeded(err)) {
+          pauseForQuota(session, err);
+          return;
+        }
+        log("youtube", "error", `YouTube live-chat lookup failed: ${(err as Error).message}`);
+        scheduleReconnect(session);
+        return;
+      }
     }
 
     if (stopped || session !== generation) return;
-    if (!liveId) {
-      log("youtube", "info", "No active public live stream found; retrying discovery.");
-      scheduleReconnect(session);
-      return;
-    }
-
-    let liveChatId: string | null;
-    try {
-      liveChatId = await getActiveLiveChatId(liveId, accessToken);
-    } catch (err) {
-      if (stopped || session !== generation) return;
-      if (isQuotaExceeded(err)) {
-        pauseForQuota(session, err);
-        return;
-      }
-      log("youtube", "error", `YouTube live-chat lookup failed: ${(err as Error).message}`);
-      scheduleReconnect(session);
-      return;
-    }
-
-    if (stopped || session !== generation) return;
-    if (!liveChatId) {
+    if (!liveId || !liveChatId) {
+      activeVideoId = null;
+      activeLiveChatId = null;
       log("youtube", "warn", "The active stream has no available live chat; retrying discovery.");
       scheduleReconnect(session);
       return;
     }
 
+    activeVideoId = liveId;
+    activeLiveChatId = liveChatId;
     reconnectDelayMs = 60_000;
     if (announcedLiveId !== liveId) {
       try {

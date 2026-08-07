@@ -87,7 +87,7 @@ CUSTOM_COMMAND_SPECS=Your specs text here
 ```
 </details>
 
-With `YOUTUBE_CHANNEL_ID` configured, the app uses the authenticated YouTube Data API to find the channel's active public live video, obtains its live-chat ID, and polls chat messages directly. No video ID, channel handle, or HTML scraping dependency is required. After connecting to a new live stream, it posts `make sure to like and subscribe` once in that stream's chat.
+With `YOUTUBE_CHANNEL_ID` configured, the app uses the authenticated YouTube Data API to find the channel's active public live video, obtains its live-chat ID, and polls chat messages directly. No video ID, channel handle, or HTML scraping dependency is required. During transient reconnects, the service reuses the active video and chat IDs instead of repeating discovery calls, requests up to 2,000 chat messages per poll, and clears the cache only when YouTube reports that the stream/chat has ended. After connecting to a new live stream, it posts `make sure to like and subscribe` once in that stream's chat.
 
 ---
 
