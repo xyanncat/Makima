@@ -3,6 +3,7 @@ import { generateResponse } from "./ai";
 import { OAuthTokenRecord } from "./db";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+export const CONNECTION_ANNOUNCEMENT = "make sure to like and subscribe";
 const youtubeTokenCache = new WeakMap<object, OAuthTokenRecord>();
 
 interface GoogleTokenResponse {
@@ -281,7 +282,7 @@ export function startYouTube(ctx: BotContext): () => void {
     reconnectTimer.unref();
   };
 
-  const handleChat = async (videoId: string, chat: any) => {
+  const handleChat = async (videoId: string, liveChatId: string, chat: any) => {
     const text: string = chatText(chat.message);
     const author: string = chat.author?.name ?? "unknown";
     const authorId: string = chat.author?.channelId ?? author;
@@ -331,7 +332,7 @@ export function startYouTube(ctx: BotContext): () => void {
           return;
         }
         const replyText = customResponse ?? await generateResponse(prompt);
-        await sendYouTubeMessage(videoId, accessToken, replyText);
+        await sendYouTubeMessage(videoId, accessToken, replyText, liveChatId);
         log(
           "youtube",
           "info",
@@ -381,7 +382,7 @@ export function startYouTube(ctx: BotContext): () => void {
       for (const item of page.items ?? []) {
         const chat = normalizeLiveChatItem(item);
         if (chat) {
-          void handleChat(videoId, chat).catch((err) =>
+          void handleChat(videoId, liveChatId, chat).catch((err) =>
             log("youtube", "error", `YouTube chat handling failed: ${(err as Error).message}`)
           );
         }
@@ -456,9 +457,9 @@ export function startYouTube(ctx: BotContext): () => void {
     reconnectDelayMs = 60_000;
     if (announcedLiveId !== liveId) {
       try {
-        await sendYouTubeMessage(liveId, accessToken, "i am live", liveChatId);
+        await sendYouTubeMessage(liveId, accessToken, CONNECTION_ANNOUNCEMENT, liveChatId);
         announcedLiveId = liveId;
-        log("youtube", "info", "Connection announcement sent: i am live");
+        log("youtube", "info", `Connection announcement sent: ${CONNECTION_ANNOUNCEMENT}`);
       } catch (err) {
         log("youtube", "warn", `Connection announcement failed: ${(err as Error).message}`);
       }

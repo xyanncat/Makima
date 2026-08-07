@@ -1,4 +1,5 @@
 import { MAKIMA_SYSTEM_PROMPT, COMMAND_PREFIX, loadConfig } from "../config";
+import { CONNECTION_ANNOUNCEMENT } from "../services/youtube";
 
 describe("command parsing", () => {
   it("uses !makima as the only AI prefix", () => {
@@ -50,5 +51,11 @@ describe("configuration", () => {
   it("rejects invalid timer and queue values", () => {
     expect(() => loadConfig({ YOUTUBE_QUEUE_MS: "-1" })).toThrow("YOUTUBE_QUEUE_MS");
     expect(() => loadConfig({ YOUTUBE_RATE_LIMIT_WINDOW_SEC: "nope" })).toThrow("YOUTUBE_RATE_LIMIT_WINDOW_SEC");
+  });
+});
+
+describe("stream announcement", () => {
+  it("uses the requested engagement message", () => {
+    expect(CONNECTION_ANNOUNCEMENT).toBe("make sure to like and subscribe");
   });
 });
